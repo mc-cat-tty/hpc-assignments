@@ -8,16 +8,15 @@
 ## Usage
 
 ### Parameter Configuration
-Parameters such as the input sizes, data type, and threshold for GPU-CPU output comparison can be modified using constants
-within the codes and .h files.  After modifying, run `make clean` then `make` on relevant code for modifications to take effect in resulting executable.
+Parameters such as the input sizes, data type, and threshold for GPU-CPU output comparisons can be enabled/disabled or modified in `options.mk` file.
+
+After modifying, run `make clean` then `make` on relevant code for modifications to take effect in resulting executable.
 
 
 #### Input Size
-By default the `STANDARD_DATASET` as defined in the `.cuh/.h` file is used as the input size.  The dataset choice can be adjusted from `STANDARD_DATASET` to other
-options (`MINI_DATASET`, `SMALL_DATASET`, etc) in the `.cuh/.h` file, the dataset size can be adjusted by defining the input size manually in the `.cuh/.h` file, or
-the input size can be changed by simply adjusting the `STANDARD_DATASET` so the program has different input dimensions.
+By default the `STANDARD_DATASET` as defined in the `<benchmark>.h` file is used as the input size.  The dataset choice can be adjusted from `STANDARD_DATASET` to other options (`MINI_DATASET`, `SMALL_DATASET`, etc) in the `options.mk` file.
 
-#### `DATA_TYPE` (in `.cuh/.h` files)
+#### `DATA_TYPE`
 By default, the `DATA_TYPE` used in these codes are `float` that can be changed to `double` by changing the `DATA_TYPE` typedef. Note that in OpenCL, the `DATA_TYPE` needs to be changed in both the .h and .cl files, as the .cl files contain the kernel code and is compiled separately at run-time.
 
 
