@@ -1,2 +1,2 @@
--include ../options.mk
+-include ./options.mk
 -include ../utilities/c.mk
