@@ -20,8 +20,7 @@ if [ $# -ne 1 ]; then
 fi;
 
 
-compute_mean_exec_time()
-{
+compute_mean_exec_time() {
     file="$1";
     benchcomputed="$2";
     cat "$file" | grep "[0-9]\+" | sort -n | head -n 4 | tail -n 3 > avg.out;

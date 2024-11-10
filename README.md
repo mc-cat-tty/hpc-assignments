@@ -1,45 +1,11 @@
-##Available Benchmarks
+# Group 2 Assignments for HPC course
 
-####datamining
-* correlation
-* covariance
+## Assignments
+1. Assignment 1 involves parallelizing `correlation` code with OpenMP v4.x.
+2. Assignment 2 TBD
+3. Assignment 3 TBD
 
-####linear-algebra/kernels
-* 2mm
-* 3mm
-* atax
-* bicg
-* cholesky
-* doitgen
-* gemm
-* gemver
-* gesummv
-* mvt
-* symm
-* syr2k
-* syrk
-* trisolv
-* trmm
-
-####linear-algebra/solvers
-* durbin
-* dynprog
-* gramschmidt
-* lu
-* ludcmp
-
-####stencils
-* adi
-* convolution-2d
-* convolution-3d
-* fdtd-2d
-* jacobi-1d-imper
-* jacobi-2d-imper
-* seidel-2d
-
-Modifying Codes
-------------------
-
+## Usage
 Parameters such as the input sizes, data type, and threshold for GPU-CPU output comparison can be modified using constants
 within the codes and .h files.  After modifying, run `make clean` then `make` on relevant code for modifications to take effect in resulting executable.
 
