@@ -45,13 +45,13 @@ static void print_array(int m,
 
 static void hash_(DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m))
 {
-  long long int hash_ = 0;
+  float hash_ = 0.0;
   for (size_t i = 0; i < M; i++)
   {
     for (size_t j = 0; j < M; j++)
       hash_ += symmat[i][j];
   }
-  printf("The computed hash: %lld\n", hash_);
+  printf("The computed hash: %f\n", hash_);
 }
 
 /* Main computational kernel. The whole function will be timed,
@@ -103,7 +103,27 @@ static void kernel_correlation(int m, int n,
   }
 
   /* Calculate the m * m correlation matrix. */
-  #pragma omp parallel for schedule(dynamic, 3)
+  unsigned r, c;  //< row and column index
+  for (r = 0; r < _PB_N; r++) {
+    symmat[r][r] = 1.0;
+  }
+
+  for (i = 0; i < _PB_N; i++) {
+    for (r = 0; r < _PB_N; r++) {
+      for (c = r+1; c < _PB_M; c++) {
+        symmat[r][c] += data[i][r] * data[i][c];
+      }
+    } 
+  }
+
+
+  for (r = 0; r < _PB_N; r++) {
+    for (c = 0; c < _PB_M; c++) {
+      symmat[c][r] = symmat[r][c];
+    }
+  }
+
+  /*
   for (j1 = 0; j1 < _PB_M - 1; j1++) {
     symmat[j1][j1] = 1.0;
     for (j2 = j1 + 1; j2 < _PB_M; j2++) {
@@ -111,9 +131,10 @@ static void kernel_correlation(int m, int n,
       for (i = 0; i < _PB_N; i++) {
         symmat[j1][j2] += (data[i][j1] * data[i][j2]);
       }
-      symmat[j1][j2] = symmat[j2][j1];
+      symmat[j2][j1] = symmat[j1][j2];
     }
   }
+  */
   
   symmat[_PB_M - 1][_PB_M - 1] = 1.0;
 }
