@@ -95,25 +95,26 @@ static void kernel_correlation(int m, int n,
   }
 
   /* Center and reduce the column vectors. */
-  for (i = 0; i < _PB_N; i++)
-    for (j = 0; j < _PB_M; j++)
-    {
+  for (i = 0; i < _PB_N; i++) {
+    for (j = 0; j < _PB_M; j++) {
       data[i][j] -= mean[j];
       data[i][j] /= sqrt(float_n) * stddev[j];
     }
+  }
 
   /* Calculate the m * m correlation matrix. */
-  for (j1 = 0; j1 < _PB_M - 1; j1++)
-  {
+  #pragma omp parallel for schedule(dynamic, 3)
+  for (j1 = 0; j1 < _PB_M - 1; j1++) {
     symmat[j1][j1] = 1.0;
-    for (j2 = j1 + 1; j2 < _PB_M; j2++)
-    {
+    for (j2 = j1 + 1; j2 < _PB_M; j2++) {
       symmat[j1][j2] = 0.0;
-      for (i = 0; i < _PB_N; i++)
+      for (i = 0; i < _PB_N; i++) {
         symmat[j1][j2] += (data[i][j1] * data[i][j2]);
-      symmat[j2][j1] = symmat[j1][j2];
+      }
+      symmat[j1][j2] = symmat[j2][j1];
     }
   }
+  
   symmat[_PB_M - 1][_PB_M - 1] = 1.0;
 }
 
