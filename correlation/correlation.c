@@ -8,8 +8,8 @@
 
 /* Include benchmark-specific header. */
 /* Default data type is double, default size is 1000. */
-#include "correlation.h"
-
+#include <correlation.h>
+#include <checksum.h>
 
 /* Array initialization. */
 static
@@ -138,6 +138,21 @@ int main(int argc, char** argv)
   /* Prevent dead-code elimination. All live-out data must be printed
      by the function call in argument. */
   polybench_prevent_dce(print_array(m, POLYBENCH_ARRAY(symmat)));
+
+  #if defined(VERIFY_CHECKSUM) || defined(SAVE_CHECKSUM)
+  POLYBENCH_1D_ARRAY_DECL(csum_cols,DATA_TYPE,M,m);
+  POLYBENCH_1D_ARRAY_DECL(csum_rows,DATA_TYPE,N,n);
+
+  compute_checksum(data, csum_cols, csum_rows);
+  
+  #  if defined(SAVE_CHECKSUM)
+  save_checksum(csum_cols, csum_rows);
+  #  endif
+
+  #  if defined(VERIFY_CHECKSUM)
+  verify_checksum(data, csum_cols, csum_rows);
+  #  endif
+  #endif
 
   /* Be clean. */
   POLYBENCH_FREE_ARRAY(data);
