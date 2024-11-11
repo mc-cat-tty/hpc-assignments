@@ -108,8 +108,10 @@ static void kernel_correlation(int m, int n,
     symmat[r][r] = 1.0;
   }
 
+  #pragma omp parallel for schedule(dynamic, 3)
   for (i = 0; i < _PB_N; i++) {
     for (r = 0; r < _PB_N; r++) {
+      #pragma omp simd
       for (c = r+1; c < _PB_M; c++) {
         symmat[r][c] += data[i][r] * data[i][c];
       }
