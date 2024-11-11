@@ -1,6 +1,10 @@
 #ifndef CHECKSUM_H_
 #define CHECKSUM_H_
 
+#include <correlation.h>
+#include <polybench.h>
+#include <stdbool.h>
+
 void compute_checksums(
   DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
   DATA_TYPE POLYBENCH_1D(out_cols_sum, M, M),
