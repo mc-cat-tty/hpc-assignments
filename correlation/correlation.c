@@ -160,6 +160,7 @@ static void center_reduce_(int m, int n,
                            DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
                            DATA_TYPE POLYBENCH_1D(mean, M, m),
                            DATA_TYPE POLYBENCH_1D(stddev, M, m))
+
 {
   for (size_t i = 0; i < _PB_N; i++)
     for (size_t j = 0; j < _PB_M; j++)
@@ -168,25 +169,87 @@ static void center_reduce_(int m, int n,
       data[i][j] /= sqrt(float_n) * stddev[j];
     }
 }
+
 static void compute_corr_(int m, int n,
                           DATA_TYPE float_n,
                           DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
                           DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m))
 {
-#pragma omp task
+  size_t j1, j2, i;
+  /* Calculate the m * m correlation matrix. */
+  for (j1 = 0; j1 < _PB_M - 1; j1++)
+  {
+    symmat[j1][j1] = 1.0;
+    for (j2 = j1 + 1; j2 < _PB_M; j2++)
+    {
+      symmat[j1][j2] = 0.0;
+      for (i = 0; i < _PB_N; i++)
+        symmat[j1][j2] += (data[i][j1] * data[i][j2]);
+      symmat[j2][j1] = symmat[j1][j2];
+    }
+  }
+  symmat[_PB_M - 1][_PB_M - 1] = 1.0;
+}
+
+static void compute_corr_loop_interchange_not_optimized_(int m, int n,
+                                                         DATA_TYPE float_n,
+                                                         DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
+                                                         DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m))
+{
+  for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+    for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      symmat[j1][j2] = 0.0;
+
   for (size_t i = 0; i < _PB_N; i++)
+    for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+    {
+      symmat[j1][j1] = 1.0;
+      for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      {
+
+        symmat[j1][j2] += (data[i][j1] * data[i][j2]);
+      }
+    }
+
+  for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+    for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      symmat[j2][j1] = symmat[j1][j2];
+  symmat[_PB_M - 1][_PB_M - 1] = 1.0;
+}
+
+static void compute_corr_loop_interchange_optimized(int m, int n,
+                                                    DATA_TYPE float_n,
+                                                    DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
+                                                    DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m))
+{
+
+  size_t i, j1, j2;
+
+#pragma omp task
+  for (i = 0; i < _PB_N; i++)
   {
     symmat[i][i] = 1.0;
   }
 
-  for (size_t i = 0; i < _PB_N; i++)
+#pragma omp taskwait
+#pragma omp reduction(+ : symmat[ : _PB_M][ : ])
+  for (i = 0; i < _PB_N; i++)
   {
 #pragma omp task
-    for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+    for (j1 = 0; j1 < _PB_M - 1; j1++)
+    {
 #pragma omp simd
-      for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      for (j2 = j1 + 1; j2 < _PB_M; j2++)
         symmat[j1][j2] += (data[i][j1] * data[i][j2]);
+    }
   }
+
+  #pragma omp taskwait
+  for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+#pragma omp task
+#pragma omp simd
+    for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      symmat[j2][j1] = symmat[j1][j2];
 
   symmat[_PB_M - 1][_PB_M - 1] = 1.0;
 }
@@ -225,14 +288,8 @@ static void kernel_correlation_edited(int m, int n,
 #pragma omp parallel
   {
 #pragma omp master
-    compute_corr_(m, n, float_n, data, symmat);
+    compute_corr_loop_interchange_optimized(m, n, float_n, data, symmat);
   }
-#pragma omp parallel for
-  for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
-#pragma omp simd
-    for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
-      symmat[j2][j1] = symmat[j1][j2];
-
   polybench_timer_stop();
   printf("eaplsed time for computing correlation:");
   polybench_timer_print();
