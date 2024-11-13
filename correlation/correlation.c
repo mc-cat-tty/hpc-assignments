@@ -231,6 +231,14 @@ static void compute_corr_loop_interchange_optimized(int m, int n,
     symmat[i][i] = 1.0;
   }
 
+  for (j1 = 0; j1 < _PB_M - 1; j1++)
+  {
+#pragma omp task
+#pragma omp simd
+    for (j2 = j1 + 1; j2 < _PB_M; j2++)
+      symmat[j1][j2] = 0.0;
+  }
+
 #pragma omp taskwait
 #pragma omp reduction(+ : symmat[ : _PB_M][ : ])
   for (i = 0; i < _PB_N; i++)
@@ -244,7 +252,7 @@ static void compute_corr_loop_interchange_optimized(int m, int n,
     }
   }
 
-  #pragma omp taskwait
+#pragma omp taskwait
   for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
 #pragma omp task
 #pragma omp simd
