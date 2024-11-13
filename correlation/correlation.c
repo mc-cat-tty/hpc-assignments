@@ -176,20 +176,43 @@ static void compute_corr_(int m, int n,
                           DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
                           DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m))
 {
-    #pragma omp target teams num_teams((M-1) / NTHREADS_GPU) thread_limit(NTHREADS_GPU) map(to: data[0:N][0:M]) map(tofrom: symmat[0:M][0:M])
+    /*
+    #pragma omp target teams num_teams((_PB_M) / NTHREADS_GPU) thread_limit(NTHREADS_GPU) map(to: data[0:N][0:M]) map(tofrom: symmat[0:M][0:M])
     #pragma omp distribute parallel for num_threads(NTHREADS_GPU) dist_schedule(static, NTHREADS_GPU)
     for (size_t j1 = 0; j1 < _PB_M - 1; j1++){
         symmat[j1][j1] = 1.0;
         for (size_t j2 = j1 + 1; j2 < _PB_M; j2++){
             symmat[j1][j2] = 0.0;
-            //#pragma omp for simd
-            //#pragma omp parallel for reduction(+:symmat[j1][j2])
             for (size_t i = 0; i < _PB_N; i++)
                 symmat[j1][j2] += (data[i][j1] * data[i][j2]);
             symmat[j2][j1] = symmat[j1][j2];
         }
     }
     symmat[_PB_M - 1][_PB_M - 1] = 1.0;
+    */
+
+    /* Calculate the m * m correlation matrix. */
+    for (int i = 0; i < _PB_N; i++) {
+        symmat[i][i] = 1.0;
+    }
+
+    #pragma omp target data map(to: data[0:N][0:M]) map(tofrom: symmat[0:M][0:M])
+    #pragma omp target teams num_teams((_PB_N) / NTHREADS_GPU) thread_limit(NTHREADS_GPU)
+    #pragma omp distribute parallel for num_threads(NTHREADS_GPU) dist_schedule(static, NTHREADS_GPU)
+    for (int i = 0; i < _PB_N; i++) {
+        for (int r = 0; r < _PB_N; r++) {
+            #pragma omp simd
+            for (int c = r+1; c < _PB_M; c++) {
+                symmat[r][c] += data[i][r] * data[i][c];
+            }
+        }
+    }
+
+    for (int i = 0; i < _PB_N; i++) {
+        for (int j = 0; j < _PB_M; j++) {
+            symmat[j][i] = symmat[i][j];
+        }
+    }
 }
 
 static void kernel_correlation_edited(int m, int n,
@@ -246,6 +269,7 @@ int main(int argc, char **argv)
   /* Initialize array(s). */
   init_array(m, n, &float_n, POLYBENCH_ARRAY(data));
   // print_array(m, (data));
+  
   /* Start timer. */
   polybench_start_instruments;
   /* Run kernel. */
