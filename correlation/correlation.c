@@ -201,12 +201,12 @@ static void compute_corr_(int m, int n,
         symmat[i][i] = 1.0;
     }
 
-    #pragma omp target data map(to: data[0:N][0:M]) map(tofrom: symmat[0:M][0:M])
+    #pragma omp target data map(to: data[0:_PB_N][0:_PB_M]) map(tofrom: symmat[0:_PB_M][0:_PB_M])
     #pragma omp target teams
-    #pragma omp distribute parallel for collapse(2) schedule(static, 128)
+    #pragma omp distribute parallel for collapse(2) schedule(static, 128) reduction(+:symmat[0:_PB_M][0:_PB_M])
     for (int i = 0; i < _PB_N; i++) {
         for (int r = 0; r < _PB_N; r++) {
-            // #pragma omp simd
+            #pragma omp simd
             for (int c = r+1; c < _PB_M; c++) {
                 symmat[r][c] += data[i][r] * data[i][c];
             }

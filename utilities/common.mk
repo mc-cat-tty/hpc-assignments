@@ -34,7 +34,7 @@ veryclean : clean
 	-rm -vf $(DEPS)
 
 run: $(EXE)
-	./$(EXE)
+	OMP_STACKSIZE=100M ./$(EXE)
 
 $(DEPS): $(SRC) $(HEADERS)
 	$(CC) $(INCPATHS) $(DEP_FLAG) $(SRC) > $(DEPS)
