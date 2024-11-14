@@ -103,18 +103,23 @@ static void kernel_correlation(int m, int n,
     }
 
   /* Calculate the m * m correlation matrix. */
-  for (j1 = 0; j1 < _PB_M - 1; j1++)
-  {
-    symmat[j1][j1] = 1.0;
-    for (j2 = j1 + 1; j2 < _PB_M; j2++)
-    {
-      symmat[j1][j2] = 0.0;
-      for (i = 0; i < _PB_N; i++)
-        symmat[j1][j2] += (data[i][j1] * data[i][j2]);
-      symmat[j2][j1] = symmat[j1][j2];
+  for (int i = 0; i < _PB_M; i++) {
+    symmat[i][i] = 1.0;
+  }
+
+  for (int i = 0; i < _PB_N; i++) {
+    for (int r = 0; r < _PB_N; r++) {
+      for (int c = r+1; c < _PB_M; c++) {
+        symmat[r][c] += data[i][r] * data[i][c];
+      }
     }
   }
-  symmat[_PB_M - 1][_PB_M - 1] = 1.0;
+
+  for (int i = 0; i < _PB_M; i++) {
+    for (int j = 0; j < _PB_N; j++) {
+      symmat[j][i] = symmat[i][j];
+    }
+  }
 }
 
 static void mean_(int m, int n,
@@ -197,11 +202,11 @@ static void compute_corr_(int m, int n,
     }
 
     #pragma omp target data map(to: data[0:N][0:M]) map(tofrom: symmat[0:M][0:M])
-    #pragma omp target teams num_teams((_PB_N) / NTHREADS_GPU) thread_limit(NTHREADS_GPU)
-    #pragma omp distribute parallel for num_threads(NTHREADS_GPU) dist_schedule(static, NTHREADS_GPU)
+    #pragma omp target teams
+    #pragma omp distribute parallel for collapse(2) schedule(static, 128)
     for (int i = 0; i < _PB_N; i++) {
         for (int r = 0; r < _PB_N; r++) {
-            #pragma omp simd
+            // #pragma omp simd
             for (int c = r+1; c < _PB_M; c++) {
                 symmat[r][c] += data[i][r] * data[i][c];
             }
@@ -283,7 +288,7 @@ int main(int argc, char **argv)
   polybench_stop_instruments;
   puts("Original execution time [ms]: ");
   polybench_print_instruments;
-  hash_(POLYBENCH_ARRAY(sgymmat_default));
+  hash_(POLYBENCH_ARRAY(symmat_default));
 
   /* Run kernel. */
   polybench_start_instruments;
