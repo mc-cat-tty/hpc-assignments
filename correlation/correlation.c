@@ -281,8 +281,9 @@ int main(int argc, char **argv)
 
   /* Stop and print timer. */
   polybench_stop_instruments;
+  puts("Original execution time [ms]: ");
   polybench_print_instruments;
-  hash_(POLYBENCH_ARRAY(symmat_default));
+  hash_(POLYBENCH_ARRAY(sgymmat_default));
 
   /* Run kernel. */
   polybench_start_instruments;
@@ -293,6 +294,7 @@ int main(int argc, char **argv)
                             POLYBENCH_ARRAY(stddev));
   /* Stop and print timer. */
   polybench_stop_instruments;
+  puts("Parallel execution time [ms]: ");
   polybench_print_instruments;
   hash_(POLYBENCH_ARRAY(symmat));
   // print_array(m, POLYBENCH_ARRAY(symmat));
