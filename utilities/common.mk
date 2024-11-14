@@ -10,12 +10,14 @@ SRC += $(UTIL_DIR)/polybench.c
 DEPS        := Makefile.dep
 DEP_FLAG    := -MM
 
-CC=clang
+CC=gcc
+# CC=clang
 LD=ld
 OBJDUMP=objdump
 
-OPT=-O2 -g -Wall -pg -fopenmp
-OMP=-fopenmp=libomp -fopenmp-targets=nvptx64-nvidia-cuda
+OPT=-O2 -g -fopenmp
+# OPT=-O2 -g -Wall -pg -fopenmp
+# OMP=-fopenmp=libomp -fopenmp-targets=nvptx64-nvidia-cuda
 
 CFLAGS=$(OPT) $(OMP) -I. $(EXT_CFLAGS)
 LDFLAGS=-lm $(EXT_LDFLAGS)
@@ -38,8 +40,8 @@ veryclean : clean
 run: $(EXE)
 	./$(EXE)
 
-profile: $(EXE)
-	sudo LD_LIBRARY_PATH=/usr/local/cuda/lib:/usr/ext/lib:${LD_LIBRARY_PATH} LIBRARY_PATH=/usr/ext/lib:${LIBRARY_PATH} /usr/local/cuda/bin/nvprof ./$(EXE) $(EXT_ARGS)
+# profile: $(EXE)
+	# sudo LD_LIBRARY_PATH=/usr/local/cuda/lib:/usr/ext/lib:${LD_LIBRARY_PATH} LIBRARY_PATH=/usr/ext/lib:${LIBRARY_PATH} /usr/local/cuda/bin/nvprof ./$(EXE) $(EXT_ARGS)
 
 $(DEPS): $(SRC) $(HEADERS)
 	$(CC) $(INCPATHS) $(DEP_FLAG) $(SRC) > $(DEPS)

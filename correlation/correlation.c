@@ -84,7 +84,6 @@ static void kernel_correlation(int m, int n,
   {
     stddev[j] = 0.0;
     for (i = 0; i < _PB_N; i++)
-
       stddev[j] += (data[i][j] - mean[j]) * (data[i][j] - mean[j]);
     stddev[j] /= float_n;
     stddev[j] = sqrt_of_array_cell(stddev, j);
@@ -217,7 +216,7 @@ static void compute_corr_loop_interchange_not_optimized_(int m, int n,
   symmat[_PB_M - 1][_PB_M - 1] = 1.0;
 }
 
-static void compute_corr_loop_interchange_optimized(int m, int n,
+static void compute_corr_loop_interchange_task_opt_(int m, int n,
                                                     DATA_TYPE float_n,
                                                     DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
                                                     DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m))
@@ -240,16 +239,22 @@ static void compute_corr_loop_interchange_optimized(int m, int n,
   }
 
 #pragma omp taskwait
-#pragma omp reduction(+ : symmat[ : _PB_M][ : ])
-  for (i = 0; i < _PB_N; i++)
+
+  for (i = 0; i < _PB_N; i += 4)
   {
 #pragma omp task
     for (j1 = 0; j1 < _PB_M - 1; j1++)
     {
 #pragma omp simd
       for (j2 = j1 + 1; j2 < _PB_M; j2++)
+      {
         symmat[j1][j2] += (data[i][j1] * data[i][j2]);
+        symmat[j1][j2] += (data[i + 1][j1] * data[i + 1][j2]);
+        symmat[j1][j2] += (data[i + 2][j1] * data[i + 2][j2]);
+        symmat[j1][j2] += (data[i + 3][j1] * data[i + 3][j2]);
+      }
     }
+#pragma omp taskwait
   }
 
 #pragma omp taskwait
@@ -259,6 +264,50 @@ static void compute_corr_loop_interchange_optimized(int m, int n,
     for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
       symmat[j2][j1] = symmat[j1][j2];
 
+  symmat[_PB_M - 1][_PB_M - 1] = 1.0;
+}
+
+static void compute_corr_loop_interchange_parallel_opt_(int m, int n,
+                                                        DATA_TYPE float_n,
+                                                        DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
+                                                        DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m))
+{
+#pragma omp parallel for
+  for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+  {
+    symmat[j1][j1] = 1.0;
+    for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      symmat[j1][j2] = 0.0;
+  }
+  int unroll_size_ = 4;
+  int blocks = _PB_N / unroll_size_;
+  for (size_t i = 0; i < blocks; i += 1)
+#pragma omp parallel for schedule(dynamic)
+    for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+#pragma omp simd
+      for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      {
+        size_t idx = i * unroll_size_;
+        symmat[j1][j2] += (data[idx][j1] * data[idx][j2]);
+        symmat[j1][j2] += (data[idx + 1][j1] * data[idx + 1][j2]);
+        symmat[j1][j2] += (data[idx + 2][j1] * data[idx + 2][j2]);
+        symmat[j1][j2] += (data[idx + 3][j1] * data[idx + 3][j2]);
+      }
+
+  for (size_t i = unroll_size_ * blocks; i < _PB_N; i++)
+#pragma omp parallel for schedule(dynamic)
+    for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+#pragma omp simd
+      for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      {
+        symmat[j1][j2] += (data[i][j1] * data[i][j2]);
+      }
+
+#pragma omp paralell for
+  for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+#pragma omp simd
+    for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      symmat[j2][j1] = symmat[j1][j2];
   symmat[_PB_M - 1][_PB_M - 1] = 1.0;
 }
 
@@ -293,11 +342,18 @@ static void kernel_correlation_edited(int m, int n,
   polybench_timer_print();
 
   polybench_timer_start();
-#pragma omp parallel
-  {
-#pragma omp master
-    compute_corr_loop_interchange_optimized(m, n, float_n, data, symmat);
-  }
+#ifdef NO_OPT
+  compute_corr_(m, n, float_n, data, symmat);
+#endif
+#ifdef LOOP_OPT
+  compute_corr_loop_interchange_not_optimized_(m, n, float_n, data, symmat);
+#endif
+#ifdef TASK_OPT
+  compute_corr_loop_interchange_task_opt_(m, n, float_n, data, symmat);
+#endif
+#ifdef PARALLEL_OPT
+  compute_corr_loop_interchange_parallel_opt_(m, n, float_n, data, symmat);
+#endif
   polybench_timer_stop();
   printf("eaplsed time for computing correlation:");
   polybench_timer_print();
@@ -322,15 +378,18 @@ int main(int argc, char **argv)
   // print_array(m, (data));
   /* Start timer. */
   polybench_start_instruments;
+#ifdef BASELINE
   kernel_correlation(m, n, float_n,
                      POLYBENCH_ARRAY(data),
                      POLYBENCH_ARRAY(symmat_default),
                      POLYBENCH_ARRAY(mean),
                      POLYBENCH_ARRAY(stddev));
+#endif
   polybench_stop_instruments;
   polybench_print_instruments;
   hash_(POLYBENCH_ARRAY(symmat_default));
 
+  init_array(m, n, &float_n, POLYBENCH_ARRAY(data));
   polybench_start_instruments;
   kernel_correlation_edited(m, n, float_n,
                             POLYBENCH_ARRAY(data),
