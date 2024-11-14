@@ -45,13 +45,13 @@ static void print_array(int m,
 
 static void hash_(DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m))
 {
-  long long int hash_ = 0;
+  double hash_ = 0.;
   for (size_t i = 0; i < M; i++)
   {
     for (size_t j = 0; j < M; j++)
       hash_ += symmat[i][j];
   }
-  printf("The computed hash: %lld\n", hash_);
+  printf("The computed hash: %f\n", hash_);
 }
 
 /* Main computational kernel. The whole function will be timed,
