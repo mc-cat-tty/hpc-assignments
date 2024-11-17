@@ -77,14 +77,11 @@ static void kernel_correlation(int m, int n,
       mean[j] += data[i][j];
     mean[j] /= float_n;
   }
-  // conviene inziare a modularizzare i vari step per calcolare la correlation e poi vedere a livello di tempo
-  //  quanto ci costano
   /* Determine standard deviations of column vectors of data matrix. */
   for (j = 0; j < _PB_M; j++)
   {
     stddev[j] = 0.0;
     for (i = 0; i < _PB_N; i++)
-
       stddev[j] += (data[i][j] - mean[j]) * (data[i][j] - mean[j]);
     stddev[j] /= float_n;
     stddev[j] = sqrt_of_array_cell(stddev, j);
@@ -166,6 +163,7 @@ static void center_reduce_(int m, int n,
                            DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
                            DATA_TYPE POLYBENCH_1D(mean, M, m),
                            DATA_TYPE POLYBENCH_1D(stddev, M, m))
+
 {
     //#pragma omp target teams num_teams((M*N) / NTHREADS_GPU) thread_limit(NTHREADS_GPU) map(tofrom: data[0:N][0:M]) map(to: mean[0:M], stddev[0:M], float_n)
     //#pragma omp distribute parallel for num_threads(NTHREADS_GPU) dist_schedule(static, NTHREADS_GPU)
@@ -181,7 +179,25 @@ static void compute_corr_(int m, int n,
                           DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
                           DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m))
 {
-    /*
+  size_t j1, j2, i;
+  /* Calculate the m * m correlation matrix. */
+  for (j1 = 0; j1 < _PB_M - 1; j1++)
+  {
+    symmat[j1][j1] = 1.0;
+    for (j2 = j1 + 1; j2 < _PB_M; j2++)
+    {
+      symmat[j1][j2] = 0.0;
+      for (i = 0; i < _PB_N; i++)
+        symmat[j1][j2] += (data[i][j1] * data[i][j2]);
+      symmat[j2][j1] = symmat[j1][j2];
+    }
+}
+  
+static void compute_corr_loop_interchange_device(int m, int n,
+                          DATA_TYPE float_n,
+                          DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
+                          DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m)) {
+      /*
     #pragma omp target teams num_teams((_PB_M) / NTHREADS_GPU) thread_limit(NTHREADS_GPU) map(to: data[0:N][0:M]) map(tofrom: symmat[0:M][0:M])
     #pragma omp distribute parallel for num_threads(NTHREADS_GPU) dist_schedule(static, NTHREADS_GPU)
     for (size_t j1 = 0; j1 < _PB_M - 1; j1++){
@@ -217,7 +233,124 @@ static void compute_corr_(int m, int n,
         for (int j = 0; j < _PB_M; j++) {
             symmat[j][i] = symmat[i][j];
         }
+}
+
+static void compute_corr_loop_interchange_not_optimized_(int m, int n,
+                                                         DATA_TYPE float_n,
+                                                         DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
+                                                         DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m))
+{
+  for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+    for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      symmat[j1][j2] = 0.0;
+
+  for (size_t i = 0; i < _PB_N; i++)
+    for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+    {
+      symmat[j1][j1] = 1.0;
+      for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+        symmat[j1][j2] += (data[i][j1] * data[i][j2]);
     }
+
+  for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+    for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      symmat[j2][j1] = symmat[j1][j2];
+  symmat[_PB_M - 1][_PB_M - 1] = 1.0;
+}
+
+static void compute_corr_loop_interchange_task_opt_(int m, int n,
+                                                    DATA_TYPE float_n,
+                                                    DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
+                                                    DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m))
+{
+
+  size_t i, j1, j2;
+
+#pragma omp task
+  for (i = 0; i < _PB_N; i++)
+    symmat[i][i] = 1.0;
+
+  for (j1 = 0; j1 < _PB_M - 1; j1++)
+#pragma omp task
+#pragma omp simd
+    for (j2 = j1 + 1; j2 < _PB_M; j2++)
+      symmat[j1][j2] = 0.0;
+
+  int unroll_size_ = 4;
+  int blocks = _PB_N / unroll_size_;
+#pragma omp taskwait
+
+  for (size_t i = 0; i < blocks; i += 1)
+#pragma omp task
+    for (j1 = 0; j1 < _PB_M - 1; j1++)
+#pragma omp simd
+      for (j2 = j1 + 1; j2 < _PB_M; j2++)
+      {
+        size_t idx = i * unroll_size_;
+        symmat[j1][j2] += (data[idx][j1] * data[idx][j2]);
+        symmat[j1][j2] += (data[idx + 1][j1] * data[idx + 1][j2]);
+        symmat[j1][j2] += (data[idx + 2][j1] * data[idx + 2][j2]);
+        symmat[j1][j2] += (data[idx + 3][j1] * data[idx + 3][j2]);
+      }
+#pragma omp taskwait
+
+  for (size_t i = unroll_size_ * blocks; i < _PB_N; i++)
+#pragma omp task
+    for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+#pragma omp simd
+      for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+        symmat[j1][j2] += (data[i][j1] * data[i][j2]);
+#pragma omp taskwait
+
+  for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+#pragma omp task
+#pragma omp simd
+    for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      symmat[j2][j1] = symmat[j1][j2];
+
+  symmat[_PB_M - 1][_PB_M - 1] = 1.0;
+}
+
+static void compute_corr_loop_interchange_parallel_opt_(int m, int n,
+                                                        DATA_TYPE float_n,
+                                                        DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
+                                                        DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m))
+{
+#pragma omp parallel for
+  for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+  {
+    symmat[j1][j1] = 1.0;
+    for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      symmat[j1][j2] = 0.0;
+  }
+
+  int unroll_size_ = 4;
+  int blocks = _PB_N / unroll_size_;
+  for (size_t i = 0; i < blocks; i += 1)
+#pragma omp parallel for schedule(dynamic)
+    for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+#pragma omp simd
+      for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      {
+        size_t idx = i * unroll_size_;
+        symmat[j1][j2] += (data[idx][j1] * data[idx][j2]);
+        symmat[j1][j2] += (data[idx + 1][j1] * data[idx + 1][j2]);
+        symmat[j1][j2] += (data[idx + 2][j1] * data[idx + 2][j2]);
+        symmat[j1][j2] += (data[idx + 3][j1] * data[idx + 3][j2]);
+      }
+
+  for (size_t i = unroll_size_ * blocks; i < _PB_N; i++)
+    for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+      for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+        symmat[j1][j2] += (data[i][j1] * data[i][j2]);
+
+#pragma omp parallel for
+  for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
+#pragma omp simd
+    for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
+      symmat[j2][j1] = symmat[j1][j2];
+      
+  symmat[_PB_M - 1][_PB_M - 1] = 1.0;
 }
 
 static void kernel_correlation_edited(int m, int n,
@@ -251,7 +384,18 @@ static void kernel_correlation_edited(int m, int n,
   polybench_timer_print();
 
   polybench_timer_start();
+#ifdef NO_OPT
   compute_corr_(m, n, float_n, data, symmat);
+#endif
+#ifdef LOOP_OPT
+  compute_corr_loop_interchange_not_optimized_(m, n, float_n, data, symmat);
+#endif
+#ifdef TASK_OPT
+  compute_corr_loop_interchange_task_opt_(m, n, float_n, data, symmat);
+#endif
+#ifdef PARALLEL_OPT
+  compute_corr_loop_interchange_parallel_opt_(m, n, float_n, data, symmat);
+#endif
   polybench_timer_stop();
   printf("elapsed time for computing correlation:");
   polybench_timer_print();
@@ -259,6 +403,7 @@ static void kernel_correlation_edited(int m, int n,
 
 int main(int argc, char **argv)
 {
+
   /* Retrieve problem size. */
   int n = N;
   int m = M;
@@ -271,33 +416,31 @@ int main(int argc, char **argv)
   POLYBENCH_1D_ARRAY_DECL(mean, DATA_TYPE, M, m);
   POLYBENCH_1D_ARRAY_DECL(stddev, DATA_TYPE, M, m);
 
+#ifdef BASELINE
   /* Initialize array(s). */
   init_array(m, n, &float_n, POLYBENCH_ARRAY(data));
   // print_array(m, (data));
   
   /* Start timer. */
   polybench_start_instruments;
-  /* Run kernel. */
   kernel_correlation(m, n, float_n,
                      POLYBENCH_ARRAY(data),
                      POLYBENCH_ARRAY(symmat_default),
                      POLYBENCH_ARRAY(mean),
                      POLYBENCH_ARRAY(stddev));
-
-  /* Stop and print timer. */
   polybench_stop_instruments;
   puts("Original execution time [ms]: ");
   polybench_print_instruments;
   hash_(POLYBENCH_ARRAY(symmat_default));
+#endif
 
-  /* Run kernel. */
+  init_array(m, n, &float_n, POLYBENCH_ARRAY(data));
   polybench_start_instruments;
   kernel_correlation_edited(m, n, float_n,
                             POLYBENCH_ARRAY(data),
                             POLYBENCH_ARRAY(symmat),
                             POLYBENCH_ARRAY(mean),
                             POLYBENCH_ARRAY(stddev));
-  /* Stop and print timer. */
   polybench_stop_instruments;
   puts("Parallel execution time [ms]: ");
   polybench_print_instruments;
