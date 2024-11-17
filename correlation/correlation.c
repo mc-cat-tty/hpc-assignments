@@ -11,6 +11,7 @@
 /* Default data type is double, default size is 1000. */
 #include "correlation.h"
 
+
 /* Array initialization. */
 static void init_array(int m,
                        int n,
@@ -198,13 +199,31 @@ static void compute_corr_loop_interchange_not_optimized_(int m, int n,
     for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
       symmat[j1][j2] = 0.0;
 
+  #if INNERMOST_LOOP_PROFILING_TOGGLE == INNERMOST_LOOP_PROFILING_ENABLE
+  puts("PROFILING INNERMOST LOOP EXEC TIMES EVOLUTION:");
+  puts("INNERMOST_IT_VS_TIME_US = {");
+  #endif
+
   for (size_t i = 0; i < _PB_N; i++)
-    for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
-    {
+    for (size_t j1 = 0; j1 < _PB_M - 1; j1++) {
       symmat[j1][j1] = 1.0;
+      
+      #if INNERMOST_LOOP_PROFILING_TOGGLE == INNERMOST_LOOP_PROFILING_ENABLE
+      if (i > 0) break;
+      double t_start = rtclock();
+      #endif
+
       for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
         symmat[j1][j2] += (data[i][j1] * data[i][j2]);
+
+      #if INNERMOST_LOOP_PROFILING_TOGGLE == INNERMOST_LOOP_PROFILING_ENABLE
+      printf("%ld: %lf,\n", j1, (rtclock() - t_start)*1e3);
+      #endif
     }
+
+  #if INNERMOST_LOOP_PROFILING_TOGGLE == INNERMOST_LOOP_PROFILING_ENABLE
+  puts("}");
+  #endif
 
   for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
     for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
@@ -280,18 +299,40 @@ static void compute_corr_loop_interchange_parallel_opt_(int m, int n,
 
   int unroll_size_ = 4;
   int blocks = _PB_N / unroll_size_;
-  for (size_t i = 0; i < blocks; i += 1)
-#pragma omp parallel for schedule(dynamic)
-    for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
-#pragma omp simd
-      for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
-      {
+
+  #if INNERMOST_LOOP_PROFILING_TOGGLE == INNERMOST_LOOP_PROFILING_ENABLE
+  puts("PROFILING INNERMOST LOOP EXEC TIMES EVOLUTION:");
+  puts("INNERMOST_IT_VS_TIME_US = {");
+  #endif
+
+  for (size_t i = 0; i < blocks; i += 1) {
+    
+    #pragma omp parallel for schedule(dynamic)
+    for (size_t j1 = 0; j1 < _PB_M - 1; j1++) {
+
+      #if INNERMOST_LOOP_PROFILING_TOGGLE == INNERMOST_LOOP_PROFILING_ENABLE
+      if (i > 0) continue;
+      double t_start = rtclock();
+      #endif
+
+      #pragma omp simd
+      for (size_t j2 = j1 + 1; j2 < _PB_M; j2++) {
         size_t idx = i * unroll_size_;
         symmat[j1][j2] += (data[idx][j1] * data[idx][j2]);
         symmat[j1][j2] += (data[idx + 1][j1] * data[idx + 1][j2]);
         symmat[j1][j2] += (data[idx + 2][j1] * data[idx + 2][j2]);
         symmat[j1][j2] += (data[idx + 3][j1] * data[idx + 3][j2]);
       }
+
+      #if INNERMOST_LOOP_PROFILING_TOGGLE == INNERMOST_LOOP_PROFILING_ENABLE
+      printf("%ld: %lf,\n", j1, (rtclock() - t_start)*1e3);
+      #endif
+    }
+  }
+
+  #if INNERMOST_LOOP_PROFILING_TOGGLE == INNERMOST_LOOP_PROFILING_ENABLE
+  puts("}");
+  #endif
 
   for (size_t i = unroll_size_ * blocks; i < _PB_N; i++)
     for (size_t j1 = 0; j1 < _PB_M - 1; j1++)

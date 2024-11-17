@@ -52,7 +52,6 @@ double polybench_t_start, polybench_t_end;
 /* Timer code (RDTSC). */
 unsigned long long int polybench_c_start, polybench_c_end;
 
-static
 double rtclock()
 {
 #ifdef POLYBENCH_TIME
@@ -69,7 +68,6 @@ double rtclock()
 
 
 #ifdef POLYBENCH_CYCLE_ACCURATE_TIMER
-static
 unsigned long long int rdtsc()
 {
   unsigned long long int ret = 0;

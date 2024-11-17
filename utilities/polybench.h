@@ -25,6 +25,8 @@
 
 # include <stdlib.h>
 
+double rtclock();
+
 /* Array padding. By default, none is used. */
 # ifndef POLYBENCH_PADDING_FACTOR
 /* default: */
