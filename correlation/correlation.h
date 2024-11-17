@@ -43,5 +43,6 @@
 #  define DATA_PRINTF_MODIFIER "%0.2lf "
 # endif
 
+#define NTHREADS_GPU 1024
 
 #endif /* !CORRELATION_H */

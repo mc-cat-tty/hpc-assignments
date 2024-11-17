@@ -100,18 +100,23 @@ static void kernel_correlation(int m, int n,
     }
 
   /* Calculate the m * m correlation matrix. */
-  for (j1 = 0; j1 < _PB_M - 1; j1++)
-  {
-    symmat[j1][j1] = 1.0;
-    for (j2 = j1 + 1; j2 < _PB_M; j2++)
-    {
-      symmat[j1][j2] = 0.0;
-      for (i = 0; i < _PB_N; i++)
-        symmat[j1][j2] += (data[i][j1] * data[i][j2]);
-      symmat[j2][j1] = symmat[j1][j2];
+  for (int i = 0; i < _PB_M; i++) {
+    symmat[i][i] = 1.0;
+  }
+
+  for (int i = 0; i < _PB_N; i++) {
+    for (int r = 0; r < _PB_N; r++) {
+      for (int c = r+1; c < _PB_M; c++) {
+        symmat[r][c] += data[i][r] * data[i][c];
+      }
     }
   }
-  symmat[_PB_M - 1][_PB_M - 1] = 1.0;
+
+  for (int i = 0; i < _PB_M; i++) {
+    for (int j = 0; j < _PB_N; j++) {
+      symmat[j][i] = symmat[i][j];
+    }
+  }
 }
 
 static void mean_(int m, int n,
@@ -119,13 +124,14 @@ static void mean_(int m, int n,
                   DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
                   DATA_TYPE POLYBENCH_1D(mean, M, m))
 {
-  for (int j = 0; j < _PB_M; j++)
-  {
-    mean[j] = 0.0;
-    for (int i = 0; i < _PB_N; i++)
-      mean[j] += data[i][j];
-    mean[j] /= float_n;
-  }
+    //#pragma omp target teams num_teams((M*N) / NTHREADS_GPU) thread_limit(NTHREADS_GPU) map(tofrom: mean[0:M]) map(to: data[0:N][0:M], float_n)
+    //#pragma omp distribute parallel for num_threads(NTHREADS_GPU) dist_schedule(static, NTHREADS_GPU)
+    for (int j = 0; j < _PB_M; j++){
+        mean[j] = 0.0;
+        for (int i = 0; i < _PB_N; i++)
+            mean[j] += data[i][j];
+        mean[j] /= float_n;
+    }
 }
 
 static void stddev_(int m, int n,
@@ -134,22 +140,22 @@ static void stddev_(int m, int n,
                     DATA_TYPE POLYBENCH_1D(mean, M, m),
                     DATA_TYPE POLYBENCH_1D(stddev, M, m))
 {
-  // #define sqrt_of_array_cell(x, j) sqrt(x[j]);
-  DATA_TYPE eps = 0.1f;
+    // #define sqrt_of_array_cell(x, j) sqrt(x[j]);
+    DATA_TYPE eps = 0.1f;
 
-  for (size_t j = 0; j < _PB_M; j++)
-  {
-    stddev[j] = 0.0;
-    for (size_t i = 0; i < _PB_N; i++)
-
-      stddev[j] += (data[i][j] - mean[j]) * (data[i][j] - mean[j]);
-    stddev[j] /= float_n;
-    stddev[j] = sqrt_of_array_cell(stddev, j);
-    /* The following in an inelegant but usual way to handle
-       near-zero std. dev. values, which below would cause a zero-
-       divide. */
-    stddev[j] = stddev[j] <= eps ? 1.0 : stddev[j];
-  }
+    //#pragma omp target teams num_teams((M*N) / NTHREADS_GPU) thread_limit(NTHREADS_GPU) map(tofrom: stddev[0:M]) map(to: mean[0:M], data[0:N][0:M], float_n)
+    //#pragma omp distribute parallel for num_threads(NTHREADS_GPU) dist_schedule(static, NTHREADS_GPU)
+    for (size_t j = 0; j < _PB_M; j++) {
+        stddev[j] = 0.0;
+        for (size_t i = 0; i < _PB_N; i++)
+            stddev[j] += (data[i][j] - mean[j]) * (data[i][j] - mean[j]);
+        stddev[j] /= float_n;
+        stddev[j] = sqrt_of_array_cell(stddev, j);
+        /* The following in an inelegant but usual way to handle
+        near-zero std. dev. values, which below would cause a zero-
+        divide. */
+        stddev[j] = stddev[j] <= eps ? 1.0 : stddev[j];
+    }
 }
 
 static void center_reduce_(int m, int n,
@@ -159,11 +165,12 @@ static void center_reduce_(int m, int n,
                            DATA_TYPE POLYBENCH_1D(stddev, M, m))
 
 {
-  for (size_t i = 0; i < _PB_N; i++)
-    for (size_t j = 0; j < _PB_M; j++)
-    {
-      data[i][j] -= mean[j];
-      data[i][j] /= sqrt(float_n) * stddev[j];
+    //#pragma omp target teams num_teams((M*N) / NTHREADS_GPU) thread_limit(NTHREADS_GPU) map(tofrom: data[0:N][0:M]) map(to: mean[0:M], stddev[0:M], float_n)
+    //#pragma omp distribute parallel for num_threads(NTHREADS_GPU) dist_schedule(static, NTHREADS_GPU)
+    for (size_t i = 0; i < _PB_N; i++)
+        for (size_t j = 0; j < _PB_M; j++){
+        data[i][j] -= mean[j];
+        data[i][j] /= sqrt(float_n) * stddev[j];
     }
 }
 
@@ -172,7 +179,6 @@ static void compute_corr_(int m, int n,
                           DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
                           DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m))
 {
-
   size_t j1, j2, i;
   /* Calculate the m * m correlation matrix. */
   for (j1 = 0; j1 < _PB_M - 1; j1++)
@@ -185,8 +191,48 @@ static void compute_corr_(int m, int n,
         symmat[j1][j2] += (data[i][j1] * data[i][j2]);
       symmat[j2][j1] = symmat[j1][j2];
     }
-  }
-  symmat[_PB_M - 1][_PB_M - 1] = 1.0;
+}
+  
+static void compute_corr_loop_interchange_device(int m, int n,
+                          DATA_TYPE float_n,
+                          DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
+                          DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m)) {
+      /*
+    #pragma omp target teams num_teams((_PB_M) / NTHREADS_GPU) thread_limit(NTHREADS_GPU) map(to: data[0:N][0:M]) map(tofrom: symmat[0:M][0:M])
+    #pragma omp distribute parallel for num_threads(NTHREADS_GPU) dist_schedule(static, NTHREADS_GPU)
+    for (size_t j1 = 0; j1 < _PB_M - 1; j1++){
+        symmat[j1][j1] = 1.0;
+        for (size_t j2 = j1 + 1; j2 < _PB_M; j2++){
+            symmat[j1][j2] = 0.0;
+            for (size_t i = 0; i < _PB_N; i++)
+                symmat[j1][j2] += (data[i][j1] * data[i][j2]);
+            symmat[j2][j1] = symmat[j1][j2];
+        }
+    }
+    symmat[_PB_M - 1][_PB_M - 1] = 1.0;
+    */
+
+    /* Calculate the m * m correlation matrix. */
+    for (int i = 0; i < _PB_N; i++) {
+        symmat[i][i] = 1.0;
+    }
+
+    #pragma omp target data map(to: data[0:_PB_N][0:_PB_M]) map(tofrom: symmat[0:_PB_M][0:_PB_M])
+    #pragma omp target teams
+    #pragma omp distribute parallel for collapse(2) schedule(static, 128) reduction(+:symmat[0:_PB_M][0:_PB_M])
+    for (int i = 0; i < _PB_N; i++) {
+        for (int r = 0; r < _PB_N; r++) {
+            #pragma omp simd
+            for (int c = r+1; c < _PB_M; c++) {
+                symmat[r][c] += data[i][r] * data[i][c];
+            }
+        }
+    }
+
+    for (int i = 0; i < _PB_N; i++) {
+        for (int j = 0; j < _PB_M; j++) {
+            symmat[j][i] = symmat[i][j];
+        }
 }
 
 static void compute_corr_loop_interchange_not_optimized_(int m, int n,
@@ -322,19 +368,19 @@ static void kernel_correlation_edited(int m, int n,
   polybench_timer_start();
   mean_(m, n, float_n, data, mean);
   polybench_timer_stop();
-  printf("eaplsed time for computing mean:");
+  printf("elapsed time for computing mean:");
   polybench_timer_print();
 
   polybench_timer_start();
   stddev_(m, n, float_n, data, mean, stddev);
   polybench_timer_stop();
-  printf("eaplsed time for computing standard deviation:");
+  printf("elapsed time for computing standard deviation:");
   polybench_timer_print();
 
   polybench_timer_start();
   center_reduce_(m, n, float_n, data, mean, stddev);
   polybench_timer_stop();
-  printf("eaplsed time for computing center&reduce:");
+  printf("elapsed time for computing center&reduce:");
   polybench_timer_print();
 
   polybench_timer_start();
@@ -351,7 +397,7 @@ static void kernel_correlation_edited(int m, int n,
   compute_corr_loop_interchange_parallel_opt_(m, n, float_n, data, symmat);
 #endif
   polybench_timer_stop();
-  printf("eaplsed time for computing correlation:");
+  printf("elapsed time for computing correlation:");
   polybench_timer_print();
 }
 
@@ -374,6 +420,7 @@ int main(int argc, char **argv)
   /* Initialize array(s). */
   init_array(m, n, &float_n, POLYBENCH_ARRAY(data));
   // print_array(m, (data));
+  
   /* Start timer. */
   polybench_start_instruments;
   kernel_correlation(m, n, float_n,
@@ -382,6 +429,7 @@ int main(int argc, char **argv)
                      POLYBENCH_ARRAY(mean),
                      POLYBENCH_ARRAY(stddev));
   polybench_stop_instruments;
+  puts("Original execution time [ms]: ");
   polybench_print_instruments;
   hash_(POLYBENCH_ARRAY(symmat_default));
 #endif
@@ -394,6 +442,7 @@ int main(int argc, char **argv)
                             POLYBENCH_ARRAY(mean),
                             POLYBENCH_ARRAY(stddev));
   polybench_stop_instruments;
+  puts("Parallel execution time [ms]: ");
   polybench_print_instruments;
   hash_(POLYBENCH_ARRAY(symmat));
   // print_array(m, POLYBENCH_ARRAY(symmat));

@@ -38,7 +38,7 @@ veryclean : clean
 	-rm -vf $(DEPS)
 
 run: $(EXE)
-	./$(EXE)
+	OMP_STACKSIZE=100M ./$(EXE)
 
 # profile: $(EXE)
 	# sudo LD_LIBRARY_PATH=/usr/local/cuda/lib:/usr/ext/lib:${LD_LIBRARY_PATH} LIBRARY_PATH=/usr/ext/lib:${LIBRARY_PATH} /usr/local/cuda/bin/nvprof ./$(EXE) $(EXT_ARGS)
