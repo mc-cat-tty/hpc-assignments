@@ -382,6 +382,7 @@ int main(int argc, char **argv)
                      POLYBENCH_ARRAY(mean),
                      POLYBENCH_ARRAY(stddev));
   polybench_stop_instruments;
+  puts("Baseline time: ");
   polybench_print_instruments;
   hash_(POLYBENCH_ARRAY(symmat_default));
 #endif
@@ -394,6 +395,7 @@ int main(int argc, char **argv)
                             POLYBENCH_ARRAY(mean),
                             POLYBENCH_ARRAY(stddev));
   polybench_stop_instruments;
+  puts("Optimized time: ");
   polybench_print_instruments;
   hash_(POLYBENCH_ARRAY(symmat));
   // print_array(m, POLYBENCH_ARRAY(symmat));
