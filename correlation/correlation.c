@@ -222,27 +222,21 @@ static void compute_corr_loop_interchange_task_opt_(int m, int n,
 
 #pragma omp task
   for (i = 0; i < _PB_N; i++)
-  {
     symmat[i][i] = 1.0;
-  }
 
   for (j1 = 0; j1 < _PB_M - 1; j1++)
-  {
 #pragma omp task
 #pragma omp simd
     for (j2 = j1 + 1; j2 < _PB_M; j2++)
       symmat[j1][j2] = 0.0;
-  }
 
   int unroll_size_ = 4;
   int blocks = _PB_N / unroll_size_;
 #pragma omp taskwait
 
   for (size_t i = 0; i < blocks; i += 1)
-  {
 #pragma omp task
     for (j1 = 0; j1 < _PB_M - 1; j1++)
-    {
 #pragma omp simd
       for (j2 = j1 + 1; j2 < _PB_M; j2++)
       {
@@ -252,25 +246,16 @@ static void compute_corr_loop_interchange_task_opt_(int m, int n,
         symmat[j1][j2] += (data[idx + 2][j1] * data[idx + 2][j2]);
         symmat[j1][j2] += (data[idx + 3][j1] * data[idx + 3][j2]);
       }
-    }
 #pragma omp taskwait
-  }
 
   for (size_t i = unroll_size_ * blocks; i < _PB_N; i++)
-  {
 #pragma omp task
     for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
-    {
 #pragma omp simd
       for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
-      {
         symmat[j1][j2] += (data[i][j1] * data[i][j2]);
-      }
-    }
 #pragma omp taskwait
-  }
 
-#pragma omp taskwait
   for (size_t j1 = 0; j1 < _PB_M - 1; j1++)
 #pragma omp task
 #pragma omp simd
@@ -318,6 +303,7 @@ static void compute_corr_loop_interchange_parallel_opt_(int m, int n,
 #pragma omp simd
     for (size_t j2 = j1 + 1; j2 < _PB_M; j2++)
       symmat[j2][j1] = symmat[j1][j2];
+      
   symmat[_PB_M - 1][_PB_M - 1] = 1.0;
 }
 
