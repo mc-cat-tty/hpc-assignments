@@ -192,48 +192,44 @@ static void compute_corr_(int m, int n,
         symmat[j1][j2] += (data[i][j1] * data[i][j2]);
       symmat[j2][j1] = symmat[j1][j2];
     }
+  }
 }
   
-static void compute_corr_loop_interchange_device(int m, int n,
+static void compute_corr_loop_interchange_device_opt_(int m, int n,
                           DATA_TYPE float_n,
                           DATA_TYPE POLYBENCH_2D(data, M, N, m, n),
                           DATA_TYPE POLYBENCH_2D(symmat, M, M, m, m)) {
-      /*
+    /*
     #pragma omp target teams num_teams((_PB_M) / NTHREADS_GPU) thread_limit(NTHREADS_GPU) map(to: data[0:N][0:M]) map(tofrom: symmat[0:M][0:M])
     #pragma omp distribute parallel for num_threads(NTHREADS_GPU) dist_schedule(static, NTHREADS_GPU)
-    for (size_t j1 = 0; j1 < _PB_M - 1; j1++){
-        symmat[j1][j1] = 1.0;
-        for (size_t j2 = j1 + 1; j2 < _PB_M; j2++){
-            symmat[j1][j2] = 0.0;
-            for (size_t i = 0; i < _PB_N; i++)
-                symmat[j1][j2] += (data[i][j1] * data[i][j2]);
-            symmat[j2][j1] = symmat[j1][j2];
-        }
-    }
-    symmat[_PB_M - 1][_PB_M - 1] = 1.0;
     */
 
-    /* Calculate the m * m correlation matrix. */
-    for (int i = 0; i < _PB_N; i++) {
-        symmat[i][i] = 1.0;
-    }
 
-    #pragma omp target data map(to: data[0:_PB_N][0:_PB_M]) map(tofrom: symmat[0:_PB_M][0:_PB_M])
-    #pragma omp target teams
-    #pragma omp distribute parallel for collapse(2) schedule(static, 128) reduction(+:symmat[0:_PB_M][0:_PB_M])
-    for (int i = 0; i < _PB_N; i++) {
-        for (int r = 0; r < _PB_N; r++) {
-            #pragma omp simd
-            for (int c = r+1; c < _PB_M; c++) {
-                symmat[r][c] += data[i][r] * data[i][c];
-            }
-        }
+    for (int i = 0; i < _PB_M; i++) {
+      symmat[i][i] = 1.0;
+      for (int j=i+1; j < _PB_M; j++) {
+        symmat[i][j] = 0.0;
+      }
     }
 
     for (int i = 0; i < _PB_N; i++) {
-        for (int j = 0; j < _PB_M; j++) {
-            symmat[j][i] = symmat[i][j];
+      #pragma omp target data map(to: data[0:_PB_N][0:_PB_M]) map(tofrom: symmat[0:_PB_M][0:_PB_M])
+      #pragma omp target teams distribute parallel for schedule(static, 128)
+      for (int r = 0; r < _PB_N; r++) {
+        #pragma omp simd
+        for (int c = r+1; c < _PB_M; c++) {
+          symmat[r][c] += data[i][r] * data[i][c];
         }
+      }
+    }
+
+    for (int i = 0; i < _PB_N; i++) {
+      for (int j = 0; j < _PB_M; j++) {
+        symmat[j][i] = symmat[i][j];
+      }
+    }
+
+    symmat[_PB_M - 1][_PB_M - 1] = 1.0;
 }
 
 static void compute_corr_loop_interchange_not_optimized_(int m, int n,
@@ -409,19 +405,19 @@ static void kernel_correlation_edited(int m, int n,
   polybench_timer_start();
   mean_(m, n, float_n, data, mean);
   polybench_timer_stop();
-  printf("elapsed time for computing mean:");
+  printf("Elapsed time for computing mean:");
   polybench_timer_print();
 
   polybench_timer_start();
   stddev_(m, n, float_n, data, mean, stddev);
   polybench_timer_stop();
-  printf("elapsed time for computing standard deviation:");
+  printf("Elapsed time for computing standard deviation:");
   polybench_timer_print();
 
   polybench_timer_start();
   center_reduce_(m, n, float_n, data, mean, stddev);
   polybench_timer_stop();
-  printf("elapsed time for computing center&reduce:");
+  printf("Elapsed time for computing center&reduce:");
   polybench_timer_print();
 
   polybench_timer_start();
@@ -437,8 +433,11 @@ static void kernel_correlation_edited(int m, int n,
 #ifdef PARALLEL_OPT
   compute_corr_loop_interchange_parallel_opt_(m, n, float_n, data, symmat);
 #endif
+#ifdef DEVICE_OPT
+  compute_corr_loop_interchange_device_opt_(m, n, float_n, data, symmat);
+#endif
   polybench_timer_stop();
-  printf("elapsed time for computing correlation:");
+  printf("Elapsed time for computing correlation:");
   polybench_timer_print();
 }
 
