@@ -21,7 +21,7 @@ def main():
   )
   
   g.despine(left=True)
-  g.set_axis_labels("", "Execution times [ms] - log scale")
+  g.set_axis_labels("", "Execution times [s] - log scale")
   g.legend.set_title("")
   g.ax.grid(True, which="minor")
 
