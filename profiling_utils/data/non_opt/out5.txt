@@ -3,7 +3,7 @@ Elapsed time for computing mean:0.025127
 Elapsed time for computing standard deviation:0.026887
 Elapsed time for computing center&reduce:0.081710
 PROFILING INNERMOST LOOP EXEC TIMES EVOLUTION:
-INNERMOST_IT_VS_TIME_US = {
+INNERMOST_IT_VS_TIME_MS = {
 0: 0.005007,
 1: 0.004768,
 2: 0.005007,
