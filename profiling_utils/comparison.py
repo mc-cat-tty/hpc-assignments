@@ -32,7 +32,7 @@ def main():
   )
   
   g.despine(left=True)
-  g.set_axis_labels("", "Time [s]")
+  g.set_axis_labels("", "Time [s] - log scale")
   g.legend.set_title("")
   g.ax.grid(True, which="minor")
   g.ax.bar_label(g.ax.containers[-1], labels=[f"x{speedup:.1f}" for speedup in SPEEDUPS])
