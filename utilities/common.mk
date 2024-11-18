@@ -10,14 +10,20 @@ SRC += $(UTIL_DIR)/polybench.c
 DEPS        := Makefile.dep
 DEP_FLAG    := -MM
 
+ifeq (,$(findstring DEVICE_OPT,$(EXT_CFLAGS)))
 CC=gcc
-# CC=clang
+else
+CC=clang
+endif
+
 LD=ld
 OBJDUMP=objdump
 
 OPT=-O2 -g -fopenmp
-# OPT=-O2 -g -Wall -pg -fopenmp
-# OMP=-fopenmp=libomp -fopenmp-targets=nvptx64-nvidia-cuda
+ifneq (,$(findstring DEVICE_OPT,$(EXT_CFLAGS)))
+OMP=-fopenmp=libomp -fopenmp-targets=nvptx64-nvidia-cuda -Wl,-rpath=/usr/local/cuda-10/targets/aarch64-linux/lib/:/usr/ext/pkgs/llvm/11.0.0/lib:/usr/local/cuda-10.2/targets/aarch64-linux/lib/
+endif
+
 
 CFLAGS=$(OPT) $(OMP) -I. $(EXT_CFLAGS)
 LDFLAGS=-lm $(EXT_LDFLAGS)
