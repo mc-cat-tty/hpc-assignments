@@ -212,9 +212,12 @@ static void compute_corr_loop_interchange_device_opt_(int m, int n,
       }
     }
 
+    #define NTHREADS_GPU 1024
+
+    #pragma omp target data map(to: data[0:_PB_N][0:_PB_M]) map(tofrom: symmat[0:_PB_M][0:_PB_M])
     for (int i = 0; i < _PB_N; i++) {
-      #pragma omp target data map(to: data[0:_PB_N][0:_PB_M]) map(tofrom: symmat[0:_PB_M][0:_PB_M])
-      #pragma omp target teams distribute parallel for schedule(static, 128)
+      #pragma omp target teams num_teams((_PB_M) / NTHREADS_GPU) thread_limit(NTHREADS_GPU)
+       #pragma omp distribute parallel for num_threads(NTHREADS_GPU) dist_schedule(static, NTHREADS_GPU) schedule(static, 1)
       for (int r = 0; r < _PB_N; r++) {
         #pragma omp simd
         for (int c = r+1; c < _PB_M; c++) {
