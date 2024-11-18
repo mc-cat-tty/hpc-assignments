@@ -1,8 +1,9 @@
 # Group 2 Assignments for HPC course
 
 ## Assignments
-1. Assignment 1 involves parallelizing `correlation` code with OpenMP v4.x.
-2. Assignment 2 TBD
+The assignments involve parallelizing `correlation` with different frameworks:
+1. Assignment 1 involves using OpenMP v4.x.
+2. Assignment 2 involves using CUDA v10.0.
 3. Assignment 3 TBD
 
 ## Usage
