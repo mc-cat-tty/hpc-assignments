@@ -47,7 +47,7 @@ run: $(EXE)
 	./$(EXE)
 
 profile: $(EXE)
-	sudo $(CUDA_HOME)/bin/nvprof ./$(EXE)
+	sudo $(CUDA_HOME)/bin/nvprof  ./$(EXE)
 
 clean:
 	-rm -fr $(BUILD_DIR) *.exe *.out *~

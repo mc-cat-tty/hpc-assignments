@@ -4,6 +4,10 @@
 #include "chrono"
 #include "correlation.h"
 #include "omp.h"
+#include <time.h>
+#ifndef BLOCK_SIZE
+#define BLOCK_SIZE 32
+#endif
 
 using namespace std;
 using namespace chrono;
@@ -27,6 +31,11 @@ struct Mat
     const T &operator()(size_t r, size_t c) const
     {
         return data_[r * cols_ + c];
+    }
+
+    auto operator&()
+    {
+        return data_.data();
     }
 
     size_t size()
@@ -114,16 +123,16 @@ static void compute_corr_loop_interchange_not_optimized_(Mat<T> &data, Mat<T> &s
 {
 
     for (size_t j1 = 0; j1 < M - 1; j1++)
+    {
+        symmat(j1, j1) = 1.0;
         for (size_t j2 = j1 + 1; j2 < M; j2++)
             symmat(j1, j2) = 0.0;
+    }
 
     for (size_t i = 0; i < N; i++)
         for (size_t j1 = 0; j1 < M - 1; j1++)
-        {
-            symmat(j1, j1) = 1.0;
             for (size_t j2 = j1 + 1; j2 < M; j2++)
                 symmat(j1, j2) += (data(i, j1) * data(i, j2));
-        }
 
     for (size_t j1 = 0; j1 < M - 1; j1++)
         for (size_t j2 = j1 + 1; j2 < M; j2++)
@@ -134,6 +143,7 @@ static void compute_corr_loop_interchange_not_optimized_(Mat<T> &data, Mat<T> &s
 template <typename T>
 static void compute_corr_loop_interchange_task_opt_(Mat<T> &data, Mat<T> &symmat, T float_n)
 {
+    cout << "warning: for some reason task based seems not working\n";
     size_t i, j1, j2;
 
 #pragma omp task
@@ -289,17 +299,17 @@ static void kernel_correlation_optimized(size_t m, size_t n, DATA_TYPE float_n, 
 {
     Timer t("Corr");
 
-    t.start("Mean");
+    // t.start("Mean");/
     mean_(data, mean, float_n);
-    t.stop();
+    // t.stop();
 
-    t.start("Std Deviation");
+    // t.start("Std Deviation");
     stddev_(data, mean, stddev, float_n);
-    t.stop();
+    // t.stop();
 
-    t.start("Center Reduce");
+    // t.start("Center Reduce");
     center_reduce_(data, mean, stddev, float_n);
-    t.stop();
+    // t.stop();
 
 #ifdef LOOP_OPT
     t.start("Loop Opt Corr");
@@ -321,6 +331,49 @@ static void kernel_correlation_optimized(size_t m, size_t n, DATA_TYPE float_n, 
     // compute_corr_(data, symmat, float_n);
 }
 
+template <typename T>
+__global__ void corr_kernel_(T *data, T *symmat, size_t height, size_t width)
+{
+    const size_t row = threadIdx.y + blockDim.y * blockIdx.y;
+    const size_t col = threadIdx.x + blockDim.x * blockIdx.x;
+    if (row < (height) and col < (width))
+    {
+        for (size_t j2 = col + 1; j2 < width; j2++)
+            // symmat[col * width + j2] += (data[row * width + col] * data[row * width + j2]);
+            atomicAdd(&(symmat[col * width + j2]), (data[row * width + col] * data[row * width + j2]));
+    }
+}
+
+template <typename T>
+__global__ void corr_kernel_2_(T *data, T *symmat, size_t height, size_t width)
+{
+
+    const size_t row = threadIdx.y + blockDim.y * blockIdx.y;
+    const size_t col = threadIdx.x + blockDim.x * blockIdx.x;
+    const T v = data[row * width + col];
+    size_t col_start = threadIdx.x + 1;
+    __shared__ T data_shr[BLOCK_SIZE][BLOCK_SIZE];
+    if (row < (height) and col < (width))
+    {
+
+        for (size_t i = blockIdx.x; i < (width - 1 + BLOCK_SIZE) / BLOCK_SIZE; i++)
+        {
+            size_t col_offset = threadIdx.x + i * BLOCK_SIZE;
+
+            data_shr[threadIdx.y][threadIdx.x] = (col_offset < width) ? data[row * width + col_offset] : 0;
+            __syncthreads();
+
+            size_t upper_bound = (i == (((width - 1 + BLOCK_SIZE) / BLOCK_SIZE) - 1)) ? width - i + BLOCK_SIZE : BLOCK_SIZE;
+            for (size_t j = col_start; j < BLOCK_SIZE and ( i * BLOCK_SIZE + j) < width; j++)
+            {
+                atomicAdd(&(symmat[col * width + (j + i * blockDim.x)]), (v * data_shr[threadIdx.y][j]));
+            }
+            col_start = 0;
+            __syncthreads();
+        }
+    }
+}
+
 int main()
 {
     DATA_TYPE float_n = 1.2;
@@ -330,6 +383,8 @@ int main()
     vector<DATA_TYPE> stddev(M, 0);
     Mat<DATA_TYPE> symmat(M, M);
     Timer t("correlation");
+    struct timespec rt[2];
+
 #ifdef BASELINE
     t.start("baseline correlation");
     kernel_correlation(M, N, float_n, data, symmat, mean, stddev);
@@ -339,11 +394,42 @@ int main()
     stddev = vector<DATA_TYPE>(M, 0);
     symmat.zeros();
     init_array(data);
-#endif
+#elif defined(LOOP_OPT) or defined(TASK_OPT) or defined(PARALLEL_OPT)
     t.start("Correlation Optimized");
     kernel_correlation_optimized(M, N, float_n, data, symmat, mean, stddev);
     t.stop();
     hash_(symmat);
+#endif
+
+#ifdef CUDA
+    symmat.zeros();
+    clock_gettime(CLOCK_REALTIME, rt + 0);
+    DATA_TYPE *data_d, *symmat_d;
+    cudaMalloc((void **)&data_d, sizeof(DATA_TYPE) * M * N);
+    cudaMalloc((void **)&symmat_d, sizeof(DATA_TYPE) * N * N);
+
+    cudaMemcpy(data_d, &data, sizeof(DATA_TYPE) * M * N, cudaMemcpyHostToDevice);
+    cudaMemset(symmat_d, 0, sizeof(DATA_TYPE) * N * N);
+
+    dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 gridDim(((N - 1 + BLOCK_SIZE) / BLOCK_SIZE), ((M - 1 + BLOCK_SIZE) / BLOCK_SIZE));
+    t.start("GPU CORR");
+    corr_kernel_2_<<<gridDim, blockDim>>>(data_d, symmat_d, M, N);
+    cudaMemcpy(&symmat, symmat_d, sizeof(DATA_TYPE) * M * N, cudaMemcpyDeviceToHost);
+    t.stop();
+
+    clock_gettime(CLOCK_REALTIME, rt + 1);
+    double wt = (rt[1].tv_sec - rt[0].tv_sec) + 1.0e-9 * (rt[1].tv_nsec - rt[0].tv_nsec);
+    for (size_t j1 = 0; j1 < M - 1; j1++)
+    {
+        symmat(j1, j1) = 1.0;
+        for (size_t j2 = j1 + 1; j2 < M; j2++)
+            symmat(j2, j1) = symmat(j1, j2);
+    }
+    symmat(M - 1, M - 1) = 1.0;
+    hash_(symmat);
+    printf("corr_kernel_ (GPU): %9.3f sec %9.1f GFLOPS\n", wt, (float)N * (M - 1) * M / (1.0e9 * wt * 2.0));
+#endif
 
     return 0;
 }
