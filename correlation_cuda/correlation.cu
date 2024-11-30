@@ -5,12 +5,50 @@
 #include "correlation.h"
 #include "omp.h"
 #include <time.h>
+#include <cuda_runtime.h>
+#include <assert.h>
+
 #ifndef BLOCK_SIZE
 #define BLOCK_SIZE 32
 #endif
 
+#ifndef BLOCK_SIZE_X
+#define BLOCK_SIZE_X 32
+#endif
+
+#ifndef BLOCK_SIZE_Y
+#define BLOCK_SIZE_Y 32
+#endif
+
 using namespace std;
 using namespace chrono;
+
+static void stats()
+{
+    int deviceCount;
+    cudaGetDeviceCount(&deviceCount);
+
+    for (int i = 0; i < deviceCount; i++)
+    {
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties(&prop, i);
+
+        std::cout << "Device " << i << ": " << prop.name << std::endl;
+        std::cout << "Shared Memory per Block: " << prop.sharedMemPerBlock / 1024.0 << " KB" << std::endl;
+        std::cout << "Shared Memory per Multiprocessor: " << prop.sharedMemPerMultiprocessor / 1024.0 << " KB" << std::endl;
+        std::cout << "Max Threads per Block: " << prop.maxThreadsPerBlock << std::endl;
+        std::cout << "Max Threads per Multiprocessor: " << prop.maxThreadsPerMultiProcessor << std::endl;
+        std::cout << "Warp Size: " << prop.warpSize << std::endl;
+    }
+    int device;
+    cudaGetDevice(&device); // Ottieni il dispositivo corrente
+
+    size_t const_mem_size;
+    cudaDeviceGetAttribute((int *)&const_mem_size, cudaDevAttrTotalConstantMemory, device);
+
+    std::cout << "Memoria const disponibile: " << const_mem_size << " byte" << std::endl;
+    std::cout << "=============================" << std::endl;
+}
 
 template <typename T>
 struct Mat
@@ -38,22 +76,60 @@ struct Mat
         return data_.data();
     }
 
+    void t()
+    {
+        vector<T> new_data(rows_ * cols_);
+        // #pragma omp parallel for collapse(2)
+        for (int r = 0; r < rows_; r++)
+            for (int c = 0; c < cols_; c++)
+                new_data[c * rows_ + r] = data_[r * cols_ + c];
+
+        data_ = new_data;
+        size_t tmp = rows_;
+        rows_ = cols_;
+        cols_ = tmp;
+    }
+
+    Mat<T> transpose()
+    {
+        Mat<T> transpose(cols_, rows_);
+        for (int c = 0; c < cols_; ++c)
+            for (int r = 0; r < rows_; ++r)
+                transpose(c, r) = (*this)(r, c);
+        return transpose;
+    }
+
     size_t size()
     {
         return rows_ * cols_;
     }
+
     void zeros()
     {
         data_ = vector<T>(rows_ * cols_, 0);
+    }
+
+    void print()
+    {
+        cout << "[" << rows_ << "," << cols_ << "]\n";
+        for (int r = 0; r < rows_; ++r)
+        {
+            for (int c = 0; c < cols_; ++c)
+            {
+                cout << data_[r * cols_ + c] << ", ";
+            }
+            cout << endl;
+        }
+        cout << endl;
     }
 };
 
 template <typename T>
 static void init_array(Mat<T> &data)
 {
-    for (size_t i = 0; i < M; i++)
-        for (size_t j = 0; j < N; j++)
-            data(i, j) = ((DATA_TYPE)i * j) / M;
+    for (size_t i = 0; i < data.rows_; i++)
+        for (size_t j = 0; j < data.cols_; j++)
+            data(i, j) = ((T)i * j) / M;
 }
 
 template <typename T>
@@ -71,13 +147,12 @@ static void mean_(Mat<T> &data, vector<T> &mean, T float_n)
 template <typename T>
 static void stddev_(Mat<T> &data, vector<T> &mean, vector<T> &stddev, T float_n)
 {
-    DATA_TYPE eps = 0.1f;
+    T eps = 0.1f;
 
     for (size_t j = 0; j < M; j++)
     {
         stddev[j] = 0.0;
         for (size_t i = 0; i < N; i++)
-
             stddev[j] += (data(i, j) - mean[j]) * (data(i, j) - mean[j]);
         stddev[j] /= float_n;
         stddev[j] = sqrt(stddev[j]);
@@ -279,12 +354,20 @@ public:
     {
         stop_ = steady_clock::now();
         duration<double> elapsed_ms = stop_ - start_;
-        cout << "Elapsed time for " << task_name_ << ": " << (elapsed_ms.count()) << "s" << endl;
+        cout << "Elapsed time for " << task_name_ << ": " << (elapsed_ms.count()) << " sec" << endl;
+    }
+
+    void stop_flops(float flops)
+    {
+        stop_ = steady_clock::now();
+        duration<double> elapsed_ms = stop_ - start_;
+        cout << "Elapsed time for " << task_name_ << ": " << (elapsed_ms.count()) << " sec" <<"    "<< flops/elapsed_ms.count()<< " GFLOPS" <<endl;
+    
     }
 };
 
 template <typename T>
-static void kernel_correlation(size_t m, size_t n, DATA_TYPE float_n, Mat<T> &data, Mat<T> &symmat,
+static void kernel_correlation(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symmat,
                                vector<T> &mean, vector<T> &stddev)
 {
     mean_(data, mean, float_n);
@@ -294,7 +377,7 @@ static void kernel_correlation(size_t m, size_t n, DATA_TYPE float_n, Mat<T> &da
 }
 
 template <typename T>
-static void kernel_correlation_optimized(size_t m, size_t n, DATA_TYPE float_n, Mat<T> &data, Mat<T> &symmat,
+static void kernel_correlation_optimized(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symmat,
                                          vector<T> &mean, vector<T> &stddev)
 {
     Timer t("Corr");
@@ -332,94 +415,104 @@ static void kernel_correlation_optimized(size_t m, size_t n, DATA_TYPE float_n, 
 }
 
 template <typename T>
-__global__ void corr_kernel_(T *data, T *symmat, size_t height, size_t width)
+__global__ void gemm_v2(T *__restrict__ a, T *__restrict__ b, T *__restrict__ c, size_t n)
 {
-    const size_t row = threadIdx.y + blockDim.y * blockIdx.y;
-    const size_t col = threadIdx.x + blockDim.x * blockIdx.x;
-    if (row < (height) and col < (width))
+    __shared__ T as[BLOCK_SIZE][BLOCK_SIZE];
+    __shared__ T bs[BLOCK_SIZE][BLOCK_SIZE];
+
+    const size_t a_row = threadIdx.y + blockIdx.y * blockDim.y;
+    //  a_col = threadIdx.x;
+
+    //  b_row = threadIdx.y;
+    const size_t b_col = threadIdx.x + blockDim.x * blockIdx.x;
+
+    T accum = (T)0;
+
+    for (int kb = 0; kb < (n + BLOCK_SIZE - 1) / BLOCK_SIZE; ++kb)
     {
-        for (size_t j2 = col + 1; j2 < width; j2++)
-            // symmat[col * width + j2] += (data[row * width + col] * data[row * width + j2]);
-            atomicAdd(&(symmat[col * width + j2]), (data[row * width + col] * data[row * width + j2]));
+        size_t a_col = threadIdx.x + kb * blockDim.x;
+        size_t b_row = threadIdx.y + kb * blockDim.y;
+
+        as[threadIdx.y][threadIdx.x] = (a_row < n && a_col < n) ? a[a_row * n + a_col] : (T)0;
+        bs[threadIdx.y][threadIdx.x] = (b_row < n && b_col < n) ? b[b_row * n + b_col] : (T)0;
+
+        __syncthreads();
+
+        for (size_t i = 0; i < BLOCK_SIZE && (kb * BLOCK_SIZE + i) < n; i++)
+        {
+            accum += as[threadIdx.y][i] * bs[i][threadIdx.x];
+        }
+        __syncthreads();
+    }
+
+    if (a_row < n && b_col < n)
+        c[a_row * n + b_col] = accum;
+}
+
+template <typename T>
+__global__ void gemm_v3(T *__restrict__ a, T *__restrict__ c, size_t n)
+{
+    __shared__ T as[BLOCK_SIZE][BLOCK_SIZE];
+    __shared__ T bs[BLOCK_SIZE][BLOCK_SIZE];
+
+    const size_t a_row = threadIdx.y + blockIdx.y * blockDim.y;
+    const size_t b_col = threadIdx.x + blockDim.x * blockIdx.x;
+
+    T accum = (T)0;
+    if ((b_col + BLOCK_SIZE) >= a_row)
+    {
+        for (int kb = 0; kb < (n + BLOCK_SIZE - 1) / BLOCK_SIZE; ++kb)
+        {
+            size_t a_col = threadIdx.x + kb * blockDim.x;
+            size_t b_row = threadIdx.y + kb * blockDim.y;
+
+            as[threadIdx.y][threadIdx.x] = (a_row < n && a_col < n) ? a[a_row * n + a_col] : (T)0;
+            bs[threadIdx.y][threadIdx.x] = (b_row < n && b_col < n) ? a[b_col * n + b_row] : (T)0;
+
+            __syncthreads();
+
+            for (size_t i = 0; i < BLOCK_SIZE && (kb * BLOCK_SIZE + i) < n; i++)
+                accum += as[threadIdx.y][i] * bs[i][threadIdx.x];
+
+            __syncthreads();
+        }
+
+        if (a_row < n && b_col < n)
+            c[a_row * n + b_col] = accum;
     }
 }
 
 template <typename T>
-__global__ void corr_kernel_2_(T *data, T *symmat, size_t height, size_t width)
+static void cuda_corr_(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symmat,
+                       vector<T> &mean, vector<T> &stddev)
 {
+    Timer t("general");
 
-    const size_t row = threadIdx.y + blockDim.y * blockIdx.y;
-    const size_t col = threadIdx.x + blockDim.x * blockIdx.x;
-    const T v = data[row * width + col];
-    size_t col_start = threadIdx.x + 1;
-    __shared__ T data_shr[BLOCK_SIZE][BLOCK_SIZE];
-    if (row < (height) and col < (width))
-    {
-
-        for (size_t i = blockIdx.x; i < (width - 1 + BLOCK_SIZE) / BLOCK_SIZE; i++)
-        {
-            size_t col_offset = threadIdx.x + i * BLOCK_SIZE;
-
-            data_shr[threadIdx.y][threadIdx.x] = (col_offset < width) ? data[row * width + col_offset] : 0;
-            __syncthreads();
-
-            size_t upper_bound = (i == (((width - 1 + BLOCK_SIZE) / BLOCK_SIZE) - 1)) ? width - i + BLOCK_SIZE : BLOCK_SIZE;
-            for (size_t j = col_start; j < BLOCK_SIZE and ( i * BLOCK_SIZE + j) < width; j++)
-            {
-                atomicAdd(&(symmat[col * width + (j + i * blockDim.x)]), (v * data_shr[threadIdx.y][j]));
-            }
-            col_start = 0;
-            __syncthreads();
-        }
-    }
-}
-
-int main()
-{
-    DATA_TYPE float_n = 1.2;
-    Mat<DATA_TYPE> data(M, N);
-    init_array(data);
-    vector<DATA_TYPE> mean(M, 0);
-    vector<DATA_TYPE> stddev(M, 0);
-    Mat<DATA_TYPE> symmat(M, M);
-    Timer t("correlation");
-    struct timespec rt[2];
-
-#ifdef BASELINE
-    t.start("baseline correlation");
-    kernel_correlation(M, N, float_n, data, symmat, mean, stddev);
-    t.stop();
-    hash_(symmat);
-    mean = vector<DATA_TYPE>(M, 0);
-    stddev = vector<DATA_TYPE>(M, 0);
-    symmat.zeros();
-    init_array(data);
-#elif defined(LOOP_OPT) or defined(TASK_OPT) or defined(PARALLEL_OPT)
-    t.start("Correlation Optimized");
-    kernel_correlation_optimized(M, N, float_n, data, symmat, mean, stddev);
-    t.stop();
-    hash_(symmat);
-#endif
-
-#ifdef CUDA
-    symmat.zeros();
-    clock_gettime(CLOCK_REALTIME, rt + 0);
-    DATA_TYPE *data_d, *symmat_d;
-    cudaMalloc((void **)&data_d, sizeof(DATA_TYPE) * M * N);
-    cudaMalloc((void **)&symmat_d, sizeof(DATA_TYPE) * N * N);
-
-    cudaMemcpy(data_d, &data, sizeof(DATA_TYPE) * M * N, cudaMemcpyHostToDevice);
-    cudaMemset(symmat_d, 0, sizeof(DATA_TYPE) * N * N);
-
-    dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 gridDim(((N - 1 + BLOCK_SIZE) / BLOCK_SIZE), ((M - 1 + BLOCK_SIZE) / BLOCK_SIZE));
-    t.start("GPU CORR");
-    corr_kernel_2_<<<gridDim, blockDim>>>(data_d, symmat_d, M, N);
-    cudaMemcpy(&symmat, symmat_d, sizeof(DATA_TYPE) * M * N, cudaMemcpyDeviceToHost);
+    t.start("mean + stddev + center_reduce");
+    mean_(data, mean, float_n);
+    stddev_(data, mean, stddev, float_n);
+    center_reduce_(data, mean, stddev, float_n);
     t.stop();
 
-    clock_gettime(CLOCK_REALTIME, rt + 1);
-    double wt = (rt[1].tv_sec - rt[0].tv_sec) + 1.0e-9 * (rt[1].tv_nsec - rt[0].tv_nsec);
+
+    dim3 blockDim(BLOCK_SIZE_X, BLOCK_SIZE_Y);
+    dim3 gridDim(((N - 1 + BLOCK_SIZE_X) / BLOCK_SIZE_X), ((M - 1 + BLOCK_SIZE_Y) / BLOCK_SIZE_Y));
+
+    t.start("MemAlloc, data transpose and Cpy[HtoD]");
+    T *data_d, *dataT_d, *symmat_d;
+    cudaMalloc((void **)&dataT_d, sizeof(T) * M * N);
+    cudaMalloc((void **)&symmat_d, sizeof(T) * N * N);
+
+    cudaMemset(symmat_d, 0, sizeof(T) * N * N);
+    data.t();
+    cudaMemcpy(dataT_d, &data, sizeof(T) * M * N, cudaMemcpyHostToDevice);
+    t.stop();
+
+    t.start("gemm_v3(GPU)");    
+    gemm_v3<<<gridDim, blockDim>>>(dataT_d, symmat_d, N);
+    cudaMemcpy(&symmat, symmat_d, sizeof(T) * M * N, cudaMemcpyDeviceToHost);
+    t.stop_flops((float)N * (M - 1) * M / (1.0e9 * 2.0));
+
     for (size_t j1 = 0; j1 < M - 1; j1++)
     {
         symmat(j1, j1) = 1.0;
@@ -427,9 +520,54 @@ int main()
             symmat(j2, j1) = symmat(j1, j2);
     }
     symmat(M - 1, M - 1) = 1.0;
-    hash_(symmat);
-    printf("corr_kernel_ (GPU): %9.3f sec %9.1f GFLOPS\n", wt, (float)N * (M - 1) * M / (1.0e9 * wt * 2.0));
+
+}
+
+int main()
+{
+    DATA_TYPE float_n = 1.2;
+    Mat<DATA_TYPE> data(M, N);
+    vector<DATA_TYPE> mean(M, 0);
+    vector<DATA_TYPE> stddev(M, 0);
+    Mat<DATA_TYPE> symmat(M, M);
+    Mat<DATA_TYPE> symmat_default(M, M);
+    Timer t("general");
+
+#ifdef BASELINE
+    mean = vector<DATA_TYPE>(M, 0);
+    stddev = vector<DATA_TYPE>(M, 0);
+    init_array(data);
+    symmat_default.zeros();
+    t.start("total baseline corr");
+    kernel_correlation(M, N, float_n, data, symmat_default, mean, stddev);
+    t.stop();
+    hash_(symmat_default);
+
+#elif defined(LOOP_OPT) or defined(TASK_OPT) or defined(PARALLEL_OPT)
+    mean = vector<DATA_TYPE>(M, 0);
+    stddev = vector<DATA_TYPE>(M, 0);
+    init_array(data);
+    symmat_default.zeros();
+    t.start("Total Corr Optimized ");
+    kernel_correlation_optimized(M, N, float_n, data, symmat_default, mean, stddev);
+    t.stop();
+    hash_(symmat_default);
 #endif
 
+#ifdef CUDA
+
+    mean = vector<DATA_TYPE>(M, 0);
+    stddev = vector<DATA_TYPE>(M, 0);
+    init_array(data);
+    symmat.zeros();
+
+    t.start("Total GPU Corr");
+    cuda_corr_(M, N, float_n, data, symmat, mean, stddev);
+    t.stop();
+    hash_(symmat);
+
+#endif
     return 0;
 }
+
+// }
