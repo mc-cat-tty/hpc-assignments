@@ -361,8 +361,7 @@ public:
     {
         stop_ = steady_clock::now();
         duration<double> elapsed_ms = stop_ - start_;
-        cout << "Elapsed time for " << task_name_ << ": " << (elapsed_ms.count()) << " sec" <<"    "<< flops/elapsed_ms.count()<< " GFLOPS" <<endl;
-    
+        cout << "Elapsed time for " << task_name_ << ": " << (elapsed_ms.count()) << " sec" << "    " << flops / elapsed_ms.count() << " GFLOPS" << endl;
     }
 };
 
@@ -494,7 +493,6 @@ static void cuda_corr_(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symm
     center_reduce_(data, mean, stddev, float_n);
     t.stop();
 
-
     dim3 blockDim(BLOCK_SIZE_X, BLOCK_SIZE_Y);
     dim3 gridDim(((N - 1 + BLOCK_SIZE_X) / BLOCK_SIZE_X), ((M - 1 + BLOCK_SIZE_Y) / BLOCK_SIZE_Y));
 
@@ -508,7 +506,7 @@ static void cuda_corr_(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symm
     cudaMemcpy(dataT_d, &data, sizeof(T) * M * N, cudaMemcpyHostToDevice);
     t.stop();
 
-    t.start("gemm_v3(GPU)");    
+    t.start("gemm_v3(GPU)");
     gemm_v3<<<gridDim, blockDim>>>(dataT_d, symmat_d, N);
     cudaMemcpy(&symmat, symmat_d, sizeof(T) * M * N, cudaMemcpyDeviceToHost);
     t.stop_flops((float)N * (M - 1) * M / (1.0e9 * 2.0));
@@ -520,7 +518,6 @@ static void cuda_corr_(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symm
             symmat(j2, j1) = symmat(j1, j2);
     }
     symmat(M - 1, M - 1) = 1.0;
-
 }
 
 int main()
@@ -542,8 +539,9 @@ int main()
     kernel_correlation(M, N, float_n, data, symmat_default, mean, stddev);
     t.stop();
     hash_(symmat_default);
+#endif
 
-#elif defined(LOOP_OPT) or defined(TASK_OPT) or defined(PARALLEL_OPT)
+#if defined(LOOP_OPT) or defined(TASK_OPT) or defined(PARALLEL_OPT)
     mean = vector<DATA_TYPE>(M, 0);
     stddev = vector<DATA_TYPE>(M, 0);
     init_array(data);
