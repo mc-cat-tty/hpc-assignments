@@ -23,6 +23,20 @@
 using namespace std;
 using namespace chrono;
 
+#define gpuErrchk(ans)                        \
+    {                                         \
+        gpuAssert((ans), __FILE__, __LINE__); \
+    }
+static inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
+{
+    if (code != cudaSuccess)
+    {
+        fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+        if (abort)
+            exit(code);
+    }
+}
+
 static void stats()
 {
     int deviceCount;
@@ -54,11 +68,34 @@ template <typename T>
 struct Mat
 {
     size_t cols_, rows_;
-    vector<T> data_;
+    T* data_;
 
     Mat(size_t cols, size_t rows) : cols_(cols), rows_(rows)
     {
-        data_ = vector<T>(rows * cols, 0);
+        /*data_ = static_cast<T*>(malloc(rows_ * cols_ * sizeof(T)));
+        if(data_ == nullptr){
+            cout<<"Bad allocation for Mat"<<endl;
+            free(data_);
+            exit(1);
+        }*/
+        /*
+        if(NULL != cudaMallocHost(&data_, rows_ * cols_ * sizeof(T))){
+            cout<<"Bad allocation for Mat"<<endl;
+            cudaFreeHost(data_);
+            exit(1);
+        }*/
+        if(NULL != cudaMallocManaged(&data_, rows_ * cols_ * sizeof(T))){
+            cout<<"Bad allocation for Mat"<<endl;
+            cudaFree(data_);
+            exit(1);
+        }
+        memset(data_, 0, rows_ * cols_ * sizeof(T));
+    }
+
+    ~Mat() {
+        //free(data_);
+        //cudaFreeHost(data_);
+        cudaFree(data_);
     }
 
     T &operator()(size_t r, size_t c)
@@ -73,18 +110,25 @@ struct Mat
 
     auto operator&()
     {
-        return data_.data();
+        return data_;
     }
 
     void t()
     {
-        vector<T> new_data(rows_ * cols_);
+        T* new_data;
+        //new_data = static_cast<T*>(malloc(rows_ * cols_ * sizeof(T)));
+        //cudaMallocHost(&new_data, rows_ * cols_ * sizeof(T));
+        cudaMallocManaged(&new_data, rows_ * cols_ * sizeof(T));
         // #pragma omp parallel for collapse(2)
         for (int r = 0; r < rows_; r++)
             for (int c = 0; c < cols_; c++)
                 new_data[c * rows_ + r] = data_[r * cols_ + c];
 
+        //free(data_);
+        //cudaFreeHost(data_);
+        cudaFree(data_);
         data_ = new_data;
+
         size_t tmp = rows_;
         rows_ = cols_;
         cols_ = tmp;
@@ -106,7 +150,7 @@ struct Mat
 
     void zeros()
     {
-        data_ = vector<T>(rows_ * cols_, 0);
+        memset(data_, 0, rows_ * cols_ * sizeof(T));
     }
 
     void print()
@@ -483,8 +527,7 @@ __global__ void gemm_v3(T *__restrict__ a, T *__restrict__ c, size_t n)
 }
 
 template <typename T>
-static void cuda_corr_(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symmat,
-                       vector<T> &mean, vector<T> &stddev)
+static void cuda_corr_(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symmat, vector<T> &mean, vector<T> &stddev)
 {
     Timer t("general");
 
@@ -494,25 +537,27 @@ static void cuda_corr_(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symm
     center_reduce_(data, mean, stddev, float_n);
     t.stop();
 
-
     dim3 blockDim(BLOCK_SIZE_X, BLOCK_SIZE_Y);
     dim3 gridDim(((N - 1 + BLOCK_SIZE_X) / BLOCK_SIZE_X), ((M - 1 + BLOCK_SIZE_Y) / BLOCK_SIZE_Y));
 
     t.start("MemAlloc, data transpose and Cpy[HtoD]");
-    T *data_d, *dataT_d, *symmat_d;
-    cudaMalloc((void **)&dataT_d, sizeof(T) * M * N);
-    cudaMalloc((void **)&symmat_d, sizeof(T) * N * N);
-
-    cudaMemset(symmat_d, 0, sizeof(T) * N * N);
+    //T *data_d, *dataT_d, *symmat_d;
+    //cudaMalloc((void **)&dataT_d, sizeof(T) * M * N);
+    //cudaMalloc((void **)&symmat_d, sizeof(T) * N * N);
+    
+    //cudaMemset(symmat_d, 0, sizeof(T) * N * N);
     data.t();
-    cudaMemcpy(dataT_d, &data, sizeof(T) * M * N, cudaMemcpyHostToDevice);
+    //cudaMemcpy(dataT_d, &data, sizeof(T) * M * N, cudaMemcpyHostToDevice);
     t.stop();
 
     t.start("gemm_v3(GPU)");    
-    gemm_v3<<<gridDim, blockDim>>>(dataT_d, symmat_d, N);
-    cudaMemcpy(&symmat, symmat_d, sizeof(T) * M * N, cudaMemcpyDeviceToHost);
+    //gemm_v3<<<gridDim, blockDim>>>(dataT_d, symmat_d, N);
+    gemm_v3<<<gridDim, blockDim>>>(&data, &symmat, N);
+    gpuErrchk(cudaPeekAtLastError());
+    cudaDeviceSynchronize();
+    //cudaMemcpy(&symmat, symmat_d, sizeof(T) * M * N, cudaMemcpyDeviceToHost);
     t.stop_flops((float)N * (M - 1) * M / (1.0e9 * 2.0));
-
+    
     for (size_t j1 = 0; j1 < M - 1; j1++)
     {
         symmat(j1, j1) = 1.0;
