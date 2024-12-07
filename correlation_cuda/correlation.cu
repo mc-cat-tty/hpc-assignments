@@ -405,8 +405,7 @@ public:
     {
         stop_ = steady_clock::now();
         duration<double> elapsed_ms = stop_ - start_;
-        cout << "Elapsed time for " << task_name_ << ": " << (elapsed_ms.count()) << " sec" <<"    "<< flops/elapsed_ms.count()<< " GFLOPS" <<endl;
-    
+        cout << "Elapsed time for " << task_name_ << ": " << (elapsed_ms.count()) << " sec" << "    " << flops / elapsed_ms.count() << " GFLOPS" << endl;
     }
 };
 
@@ -565,7 +564,6 @@ static void cuda_corr_(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symm
             symmat(j2, j1) = symmat(j1, j2);
     }
     symmat(M - 1, M - 1) = 1.0;
-
 }
 
 int main()
@@ -587,8 +585,9 @@ int main()
     kernel_correlation(M, N, float_n, data, symmat_default, mean, stddev);
     t.stop();
     hash_(symmat_default);
+#endif
 
-#elif defined(LOOP_OPT) or defined(TASK_OPT) or defined(PARALLEL_OPT)
+#if defined(LOOP_OPT) or defined(TASK_OPT) or defined(PARALLEL_OPT)
     mean = vector<DATA_TYPE>(M, 0);
     stddev = vector<DATA_TYPE>(M, 0);
     init_array(data);
