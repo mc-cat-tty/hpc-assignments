@@ -65,37 +65,62 @@ static void stats()
 }
 
 template <typename T>
-struct Mat
+class Mat
 {
+    private:
+    T* allocator(bool &error, size_t size) {
+        T* mem;
+
+        #if MEM_MODEL == UVM_MEM
+        auto res = cudaMallocManaged(&mem, size);
+        error = (res != NULL);
+        #elif MEM_MODEL == PINNED_MEM
+        auto res = cudaMallocHost(&mem, size);
+        error = (res != NULL);
+        #elif MEM_MODEL == STANDARD_MEM
+        mem = static_cast<T*>(malloc(size));
+        error = (mem == nullptr);
+        #endif
+
+        if (not error) {
+            #if MEM_MODEL == PINNED_MEM
+            cudaMemset(mem, 0, rows_ * cols_ * sizeof(T));
+            #else
+            memset(mem, 0, rows_ * cols_ * sizeof(T));
+            #endif
+        }
+
+        return mem;
+    }
+
+    void deallocator(T* mem) {
+        #if MEM_MODEL == UVM_MEM
+        cudaFree(data_);
+        #elif MEM_MODEL == PINNED_MEM
+        cudaFreeHost(data_);
+        #elif MEM_MODEL == STANDARD_MEM
+        free(data_);
+        #endif
+    }
+
+    public:
     size_t cols_, rows_;
     T* data_;
 
     Mat(size_t cols, size_t rows) : cols_(cols), rows_(rows)
     {
-        /*data_ = static_cast<T*>(malloc(rows_ * cols_ * sizeof(T)));
-        if(data_ == nullptr){
+        bool error;
+        data_ = allocator(error, rows_ * cols_ * sizeof(T));
+
+        if (error) {
             cout<<"Bad allocation for Mat"<<endl;
-            free(data_);
-            exit(1);
-        }*/
-        /*
-        if(NULL != cudaMallocHost(&data_, rows_ * cols_ * sizeof(T))){
-            cout<<"Bad allocation for Mat"<<endl;
-            cudaFreeHost(data_);
-            exit(1);
-        }*/
-        if(NULL != cudaMallocManaged(&data_, rows_ * cols_ * sizeof(T))){
-            cout<<"Bad allocation for Mat"<<endl;
-            cudaFree(data_);
+            deallocator(data_);
             exit(1);
         }
-        memset(data_, 0, rows_ * cols_ * sizeof(T));
     }
 
     ~Mat() {
-        //free(data_);
-        //cudaFreeHost(data_);
-        cudaFree(data_);
+        deallocator(data_);
     }
 
     T &operator()(size_t r, size_t c)
@@ -115,18 +140,16 @@ struct Mat
 
     void t()
     {
-        T* new_data;
-        //new_data = static_cast<T*>(malloc(rows_ * cols_ * sizeof(T)));
-        //cudaMallocHost(&new_data, rows_ * cols_ * sizeof(T));
-        cudaMallocManaged(&new_data, rows_ * cols_ * sizeof(T));
+        bool error;
+        T* new_data = allocator(error, rows_ * cols_ * sizeof(T));
+        if (error) cout << "New data memory for transposition not allocated" << endl;
+
         // #pragma omp parallel for collapse(2)
         for (int r = 0; r < rows_; r++)
             for (int c = 0; c < cols_; c++)
                 new_data[c * rows_ + r] = data_[r * cols_ + c];
 
-        //free(data_);
-        //cudaFreeHost(data_);
-        cudaFree(data_);
+        deallocator(data_);
         data_ = new_data;
 
         size_t tmp = rows_;
@@ -540,21 +563,37 @@ static void cuda_corr_(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symm
     dim3 gridDim(((N - 1 + BLOCK_SIZE_X) / BLOCK_SIZE_X), ((M - 1 + BLOCK_SIZE_Y) / BLOCK_SIZE_Y));
 
     t.start("MemAlloc, data transpose and Cpy[HtoD]");
-    //T *data_d, *dataT_d, *symmat_d;
-    //cudaMalloc((void **)&dataT_d, sizeof(T) * M * N);
-    //cudaMalloc((void **)&symmat_d, sizeof(T) * N * N);
+
+    #if MEM_MODEL != UVM_MEM
+    T *data_d, *dataT_d, *symmat_d;
+    cudaMalloc((void **)&dataT_d, sizeof(T) * M * N);
+    cudaMalloc((void **)&symmat_d, sizeof(T) * N * N);
     
-    //cudaMemset(symmat_d, 0, sizeof(T) * N * N);
+    cudaMemset(symmat_d, 0, sizeof(T) * N * N);
+    #endif
+    
     data.t();
-    //cudaMemcpy(dataT_d, &data, sizeof(T) * M * N, cudaMemcpyHostToDevice);
+
+    #if MEM_MODEL != UVM_MEM
+    cudaMemcpy(dataT_d, &data, sizeof(T) * M * N, cudaMemcpyHostToDevice);
+    #endif
     t.stop();
 
-    t.start("gemm_v3(GPU)");    
-    //gemm_v3<<<gridDim, blockDim>>>(dataT_d, symmat_d, N);
+    t.start("gemm_v3(GPU)");   
+
+    #if MEM_MODEL != UVM_MEM
+    gemm_v3<<<gridDim, blockDim>>>(dataT_d, symmat_d, N);
+    #elif MEM_MODEL == UVM_MEM
     gemm_v3<<<gridDim, blockDim>>>(&data, &symmat, N);
+    #endif
+
     gpuErrchk(cudaPeekAtLastError());
     cudaDeviceSynchronize();
-    //cudaMemcpy(&symmat, symmat_d, sizeof(T) * M * N, cudaMemcpyDeviceToHost);
+    
+    #if MEM_MODEL != UVM_MEM
+    cudaMemcpy(&symmat, symmat_d, sizeof(T) * M * N, cudaMemcpyDeviceToHost);
+    #endif
+    
     t.stop_flops((float)N * (M - 1) * M / (1.0e9 * 2.0));
     
     for (size_t j1 = 0; j1 < M - 1; j1++)
@@ -568,6 +607,14 @@ static void cuda_corr_(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symm
 
 int main()
 {
+    #if MEM_MODEL == UVM_MEM
+    cout << "Using UVM memory model" << endl;
+    #elif MEM_MODEL == PINNED_MEM
+    cout << "Using pinned memory model" << endl;
+    #elif MEM_MODEL == STANDARD_MEM
+    cout << "Using standard memory model" << endl;
+    #endif
+
     DATA_TYPE float_n = 1.2;
     Mat<DATA_TYPE> data(M, N);
     vector<DATA_TYPE> mean(M, 0);
@@ -613,5 +660,3 @@ int main()
 #endif
     return 0;
 }
-
-// }

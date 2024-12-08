@@ -1,7 +1,13 @@
 #ifndef __CORRELATION_H__
 #define __CORRELATION_H__
 
+#define UVM_MEM 0
+#define PINNED_MEM 1
+#define STANDARD_MEM 2
 
+#if !defined(MEM_MODEL)
+#define MEM_MODEL STANDARD_MEM
+#endif
 
 # if !defined(MINI_DATASET) && !defined(SMALL_DATASET) && !defined(LARGE_DATASET) && !defined(EXTRALARGE_DATASET)
 #  define STANDARD_DATASET
