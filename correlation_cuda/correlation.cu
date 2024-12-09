@@ -195,6 +195,18 @@ static void mean_(Mat<T> &data, vector<T> &mean, T float_n)
 }
 
 template <typename T>
+__global__ void mean_kernel_(T *__restrict__ data, T *__restrict__ mean, T float_n)
+{
+    size_t idx = threadIdx.x + blockDim.x * blockIdx.x;
+    if (idx < M)
+    {
+        for (size_t i = 0; i < M; i++)
+            mean[idx] += data[idx * M + i];
+        mean[idx] /= float_n;
+    }
+}
+
+template <typename T>
 static void stddev_(Mat<T> &data, vector<T> &mean, vector<T> &stddev, T float_n)
 {
     T eps = 0.1f;
@@ -214,6 +226,24 @@ static void stddev_(Mat<T> &data, vector<T> &mean, vector<T> &stddev, T float_n)
 }
 
 template <typename T>
+__global__ void kernel_stddev_(T *__restrict__ data, T *__restrict__ mean, T *__restrict__ stddev, T float_n)
+{
+    T eps = 0.1f;
+    size_t idx = threadIdx.x + blockDim.x * blockIdx.x;
+    if (idx < M)
+
+    {
+        stddev[idx] = 0.0;
+        for (size_t i = 0; i < N; i++)
+            stddev[idx] += (data[M * idx + i] - mean[idx]) * (data[M * idx + i] - mean[idx]);
+
+        stddev[idx] /= float_n;
+        stddev[idx] = sqrt(stddev[idx]);
+        stddev[idx] = stddev[idx] <= eps ? 1.0 : stddev[idx];
+    }
+}
+
+template <typename T>
 static void center_reduce_(Mat<T> &data, vector<T> &mean, vector<T> &stddev, T float_n)
 {
     for (size_t i = 0; i < N; i++)
@@ -221,6 +251,20 @@ static void center_reduce_(Mat<T> &data, vector<T> &mean, vector<T> &stddev, T f
         {
             data(i, j) -= mean[j];
             data(i, j) /= sqrt(float_n) * stddev[j];
+        }
+}
+
+template <typename T>
+__global__ void kernel_center_reduce_(T *__restrict__ data, T *__restrict__ mean, T *__restrict__ stddev, T float_n)
+{
+
+    size_t idx = threadIdx.x + blockDim.x * blockIdx.x;
+    if (idx < M)
+
+        for (size_t j = 0; j < M; j++)
+        {
+            data[idx * M + j] -= mean[idx];
+            data[idx * M + j] /= sqrt(float_n) * stddev[idx];
         }
 }
 
@@ -536,11 +580,11 @@ static void cuda_corr_(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symm
 {
     Timer t("general");
 
-    t.start("mean + stddev + center_reduce");
-    mean_(data, mean, float_n);
-    stddev_(data, mean, stddev, float_n);
-    center_reduce_(data, mean, stddev, float_n);
-    t.stop();
+    // t.start("mean + stddev + center_reduce");
+    // mean_(data, mean, float_n);
+    // stddev_(data, mean, stddev, float_n);
+    // center_reduce_(data, mean, stddev, float_n);
+    // t.stop();
 
     dim3 blockDim(BLOCK_SIZE_X, BLOCK_SIZE_Y);
     dim3 gridDim(((N - 1 + BLOCK_SIZE_X) / BLOCK_SIZE_X), ((M - 1 + BLOCK_SIZE_Y) / BLOCK_SIZE_Y));
@@ -548,11 +592,15 @@ static void cuda_corr_(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symm
     t.start("MemAlloc, data transpose and Cpy[HtoD]");
 
 #if MEM_MODEL != UVM_MEM
-    T *dataT_d, *symmat_d;
+    T *dataT_d, *symmat_d, *mean_d, *stddev_d;
     cudaMalloc((void **)&dataT_d, sizeof(T) * M * N);
     cudaMalloc((void **)&symmat_d, sizeof(T) * N * N);
+    cudaMalloc((void **)&mean_d, sizeof(T) * N);
+    cudaMalloc((void **)&stddev_d, sizeof(T) * N);
 
     cudaMemset(symmat_d, 0, sizeof(T) * N * N);
+    cudaMemset(mean_d, 0, sizeof(T) * N);
+    cudaMemset(stddev_d, 0, sizeof(T) * N);
 #endif
 
     data.t();
@@ -560,6 +608,17 @@ static void cuda_corr_(size_t m, size_t n, T float_n, Mat<T> &data, Mat<T> &symm
 #if MEM_MODEL != UVM_MEM
     cudaMemcpy(dataT_d, &data, sizeof(T) * M * N, cudaMemcpyHostToDevice);
 #endif
+#if MEM_MODEL != UVM_MEM
+
+    mean_kernel_<<<((N - 1 + BLOCK_SIZE) / BLOCK_SIZE), BLOCK_SIZE>>>(dataT_d, mean_d, float_n);
+    kernel_stddev_<<<((N - 1 + BLOCK_SIZE) / BLOCK_SIZE), BLOCK_SIZE>>>(dataT_d, mean_d, stddev_d, float_n);
+    kernel_center_reduce_<<<((N - 1 + BLOCK_SIZE) / BLOCK_SIZE), BLOCK_SIZE>>>(dataT_d, mean_d, stddev_d, float_n);
+#elif MEM_MODEL == UVM_MEM
+    mean_kernel_<<<((N - 1 + BLOCK_SIZE) / BLOCK_SIZE), BLOCK_SIZE>>>(&data, &(mean[0]), float_n);
+    kernel_stddev_<<<((N - 1 + BLOCK_SIZE) / BLOCK_SIZE), BLOCK_SIZE>>>(&data, &(mean[0]), &(stddev[0]), float_n);
+    kernel_center_reduce_<<<((N - 1 + BLOCK_SIZE) / BLOCK_SIZE), BLOCK_SIZE>>>(&data, &(mean[0]), &(stddev[0]), float_n);
+#endif
+
     t.stop();
 
     t.start("gemm_v3(GPU)");
