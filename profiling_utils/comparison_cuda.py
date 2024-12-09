@@ -15,9 +15,10 @@ DF = pd.DataFrame({
   "Dataset Size": ["Mini"] * 3 + ["Small"] * 3 + ["Standard"] * 3 + ["Large"] * 3 + ["Extra Large"] * 3
 })
 
-
-extralarge_baseline = DF[DF["Dataset Size"] == "Extra Large"][DF["Optimization"] == "Baseline"]["Time"].item()
-SPEEDUPS = [extralarge_baseline/time for time in DF[DF["Dataset Size"] == "Extra Large"]["Time"]]
+SPEEDUPS = []
+for size in DF["Dataset Size"].unique():
+  baseline = DF[DF["Dataset Size"] == size][DF["Optimization"] == "Baseline"]["Time"].item()
+  SPEEDUPS.append([baseline/time for time in DF[DF["Dataset Size"] == size]["Time"]])
 
 def main():
   sb.set_theme(style="whitegrid")
@@ -35,7 +36,8 @@ def main():
   g.set_axis_labels("", "Time [s] - log scale")
   g.legend.set_title("")
   g.ax.grid(True, which="minor")
-  g.ax.bar_label(g.ax.containers[-1], labels=[f"x{speedup:.1f}" for speedup in SPEEDUPS])
+  for container, labels in zip(g.ax.containers, SPEEDUPS):
+    g.ax.bar_label(container, labels=[f"x{speedup:.1f}" for speedup in labels])
   
   pl.yscale("log")
   pl.show()
